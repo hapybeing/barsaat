@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://hapybeing.github.io/barsaat/sitemap.xml
