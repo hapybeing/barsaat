@@ -2,75 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content" />
-  <title>Barsaat · बरसात — a window in Bhagalpur</title>
-  <meta name="description" content="A monsoon evening at a window over the Ganga in Bhagalpur. Wipe the fogged glass, write on it, breathe on it, and stay while the storm comes and goes. An interactive piece by Gaurang Kumar." />
-  <meta name="author" content="Gaurang Kumar" />
-  <meta name="theme-color" content="#14131c" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Barsaat · बरसात — a paper boat in the monsoon</title>
+  <meta name="description" content="Write a wish on a page from a school notebook, fold it into a paper boat, and steer it through a monsoon night: down a flooded lane, under bridges, through a lightning storm on the river, out to open water. Light the floating lamps on the way. A real-time WebGL piece with live-synthesised sound." />
+  <meta name="theme-color" content="#0d0e16" />
   <meta name="color-scheme" content="dark" />
   <link rel="canonical" href="https://hapybeing.github.io/barsaat/" />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="./favicon-32.png" sizes="32x32" type="image/png" />
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   <link rel="manifest" href="./site.webmanifest" />
-  <link rel="preload" href="./plate.jpg" as="image" fetchpriority="high" />
 
   <meta property="og:type" content="website" />
   <meta property="og:site_name" content="Barsaat" />
-  <meta property="og:title" content="Barsaat · बरसात — a window in Bhagalpur" />
-  <meta property="og:description" content="Wipe the fogged glass, write on it, breathe on it. A monsoon on the Ganga, made in code." />
+  <meta property="og:title" content="Barsaat · बरसात — a paper boat in the monsoon" />
+  <meta property="og:description" content="Fold your wish into a paper boat and steer it through a monsoon night. Light the lamps on the way." />
   <meta property="og:url" content="https://hapybeing.github.io/barsaat/" />
   <meta property="og:image" content="https://hapybeing.github.io/barsaat/og.jpg" />
   <meta property="og:image:width" content="1200" />
   <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="A rain-streaked, fogged window looking out at a temple on a ghat of the Ganga at monsoon dusk, with बरसात written in the fog." />
+  <meta property="og:image:alt" content="A paper boat on dark rain-rippled water at night, followed by a line of small floating oil lamps, under a stormy sky." />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Barsaat · बरसात" />
-  <meta name="twitter:description" content="A monsoon on the Ganga, seen through a window you can touch." />
+  <meta name="twitter:description" content="Fold your wish into a paper boat and steer it through a monsoon night." />
   <meta name="twitter:image" content="https://hapybeing.github.io/barsaat/og.jpg" />
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"CreativeWork","name":"Barsaat","alternateName":"बरसात","description":"An interactive monsoon window over the Ganga in Bhagalpur, rendered in WebGL with procedural sound.","author":{"@type":"Person","name":"Gaurang Kumar","url":"https://github.com/hapybeing"},"inLanguage":["en","hi"],"url":"https://hapybeing.github.io/barsaat/","image":"https://hapybeing.github.io/barsaat/og.jpg","dateCreated":"2026-10-11","locationCreated":{"@type":"Place","name":"Bhagalpur, Bihar, India"}}
+  {"@context":"https://schema.org","@type":"CreativeWork","name":"Barsaat","alternateName":"बरसात","description":"An interactive monsoon journey: a paper boat folded from your own writing, steered through a procedural city and river at night, in real-time WebGL with synthesised sound.","author":{"@type":"Person","name":"hapybeing","url":"https://github.com/hapybeing"},"inLanguage":["en","hi"],"url":"https://hapybeing.github.io/barsaat/","image":"https://hapybeing.github.io/barsaat/og.jpg"}
   </script>
   <style>
-    /* critical: the page must look intentional before the stylesheet arrives */
-    html,body{margin:0;height:100%;background:#14131c;color:#e9e4da}
-    #glass{position:fixed;inset:0;width:100%;height:100%}
-    svg{max-width:100%;height:auto}
+    html,body{margin:0;height:100%;background:#0d0e16;color:#ece4d2}
+    #world{position:fixed;inset:0;width:100%;height:100%}
   </style>
 </head>
 <body>
   <main>
-    <canvas id="glass" tabindex="0" role="img" aria-label="A fogged window at dusk, looking over the Ganga at a small temple on the ghat. Rain runs down the glass. Drag to wipe the fog, hold still to breathe on it. Arrow keys move your finger, space breathes."></canvas>
-
-    <div class="backdrop" aria-hidden="true"></div>
+    <canvas id="world" tabindex="0" role="img" aria-label="A monsoon night. A paper boat on rain-rippled water, between houses, under bridges, past temples and floating lamps. Touch and hold to steer; arrow keys also steer and space blows the boat along."></canvas>
 
     <section id="gate" class="gate" aria-labelledby="title">
       <p class="gate__hi" lang="hi">बरसात</p>
       <h1 id="title" class="gate__title">Barsaat</h1>
-      <p class="gate__lede">A monsoon evening at a window over the Ganga, in Bhagalpur.</p>
-      <p class="gate__how">Touch the glass. Wipe it, write on it, hold still to breathe on it. Stay a few minutes; the storm comes and goes.</p>
+      <p class="gate__lede">Write a wish. Fold it into a paper boat.<br />Let the monsoon carry it to the sea.</p>
       <div class="gate__actions">
-        <button id="enter-sound" class="btn btn--primary" type="button">Enter with sound</button>
-        <button id="enter-quiet" class="btn" type="button">Enter quietly</button>
+        <button id="enter-sound" class="btn btn--primary" type="button">Begin with sound</button>
+        <button id="enter-quiet" class="btn" type="button">Begin quietly</button>
       </div>
-      <p class="gate__note">Headphones help. Lightning flashes are soft and can be turned down.</p>
+      <p class="gate__note">About four minutes. Headphones help. Lightning flashes can be softened.</p>
       <div class="gate__fallback">
-        <p>Your browser can't draw the glass, so here is the view from the window, and the poem the rain writes on it.</p>
+        <p>Your browser can't draw this piece (it needs WebGL). It's a paper boat folded from your own writing, steered down a flooded lane, under bridges, through a storm on the river and out to open water, lighting floating lamps on the way.</p>
       </div>
     </section>
 
-    <section class="poem" aria-label="The poem written on the glass">
-      <h2 class="sr-only">What the rain writes</h2>
-      <ol>
-        <li><span lang="hi">गंगा आज ऊँची बह रही है</span> <span>The Ganga runs high tonight.</span></li>
-        <li><span lang="hi">बिजली ने घाट को एक पल देखा</span> <span>Lightning looked at the ghat, once.</span></li>
-        <li><span lang="hi">जो लिखा, बारिश ने पढ़ लिया</span> <span>Whatever I wrote, the rain read.</span></li>
-        <li><span lang="hi">अब दीये बहने दो</span> <span>Now let the lamps float.</span></li>
-        <li><span lang="hi">फिर बरसेगा</span> <span>It will rain again.</span></li>
-      </ol>
+    <section id="paper" class="paper" aria-hidden="true" aria-labelledby="paper-title">
+      <div class="paper__head">
+        <p class="paper__hi" lang="hi">कुछ लिखो, बारिश ले जाएगी</p>
+        <h2 id="paper-title" class="paper__title">Write something. The rain will take it.</h2>
+      </div>
+      <div class="paper__sheet"><canvas id="page" aria-label="A notebook page. Draw or write on it with your finger."></canvas></div>
+      <div class="paper__actions">
+        <button id="btn-clear" class="btn btn--ghost" type="button">Clear</button>
+        <button id="btn-fold" class="btn btn--primary" type="button">Fold it into a boat</button>
+      </div>
+    </section>
+
+    <div id="hud" class="hud" aria-hidden="true"><span class="hud__icon"></span><span id="count" lang="hi">०</span></div>
+    <div id="caption" class="caption" aria-hidden="true"><p class="hi" lang="hi"></p><p class="en"></p></div>
+    <p id="hint" class="hint" aria-hidden="true"></p>
+
+    <section id="end" class="end" aria-hidden="true" aria-labelledby="end-title">
+      <p class="end__hi" lang="hi">फिर बरसेगा</p>
+      <h2 id="end-title" class="end__title">It will rain again.</h2>
+      <p id="end-lit" class="end__lit"></p>
+      <div class="end__actions">
+        <button id="btn-drift" class="btn btn--primary" type="button">Keep drifting</button>
+        <button id="btn-again" class="btn" type="button">Fold another</button>
+        <button id="btn-card" class="btn btn--ghost" type="button">Save a postcard</button>
+      </div>
     </section>
 
     <div id="live" class="sr-only" aria-live="polite"></div>
+    <p id="debug" class="debug" hidden></p>
 
     <nav id="controls" class="controls" aria-label="Settings" hidden>
       <button id="btn-sound" class="ctl" type="button" aria-pressed="false">
@@ -91,25 +101,21 @@
       <form method="dialog">
         <p class="about__hi" lang="hi">बरसात</p>
         <h2 id="about-title">Barsaat</h2>
-        <p>A monsoon evening on the Ganga, seen from an upstairs window above a ghat in Bhagalpur, Bihar. The storm takes about three minutes to build, break and clear, then it starts again.</p>
-        <h3>On the glass</h3>
+        <p>Every monsoon, children tear a page out of a school notebook, fold it into a boat and set it in the water running down the lane. This is that boat's whole night: the lane, the canal, the river in a storm, and the open water after.</p>
+        <h3>How to play</h3>
         <ul>
-          <li><strong>Drag</strong> to wipe the fog. Use more than one finger if you like.</li>
-          <li><strong>Write</strong> anything. The rain will read it.</li>
-          <li><strong>Hold still</strong> to breathe a fresh cloud onto the pane.</li>
-          <li>Keyboard: <kbd>arrows</kbd> move your finger, <kbd>space</kbd> breathes, <kbd>n</kbd> moves the weather on.</li>
+          <li><strong>Touch and hold</strong> to steer toward your finger. Keep holding to blow the boat along.</li>
+          <li><strong>Steer through the dark lamps</strong> to light them. They follow you, and each one plays a note of Raag Megh, the raag of rain clouds.</li>
+          <li>Keyboard: <kbd>←</kbd> <kbd>→</kbd> steer, <kbd>space</kbd> blows.</li>
         </ul>
         <h3>How it's made</h3>
-        <p>Hand-written WebGL2 and GLSL, no engine. Raindrops are simulated one by one and act as tiny lenses. The fog is a simulation that regrows, clears where water runs, and keeps the shape of your finger. Every sound, from the rain to the temple bell, is synthesised live with Web Audio. The river is a single photographic plate, always seen through the glass.</p>
-        <p class="about__credit">Made by Gaurang Kumar in Bhagalpur, on an Android tablet. <a href="https://github.com/hapybeing/barsaat" rel="noopener">Source on GitHub</a>.</p>
-        <button class="btn" value="close">Back to the window</button>
+        <p>Nothing here is a photo or a recording. The city, the river and the sky are generated as you go, in real-time WebGL with hand-written GLSL shaders: every raindrop leaves a ring on the water, every lamp breaks into a long streak in it, and the walls reflect with their lit windows. The boat is folded from the very page you wrote on. All the sound, from the rain on tin roofs to the tanpura, the thunder and the temple bells, is synthesised live with Web Audio.</p>
+        <p class="about__credit">Made by <a href="https://github.com/hapybeing" rel="noopener">hapybeing</a>, on an Android tablet. <a href="https://github.com/hapybeing/barsaat" rel="noopener">Source on GitHub</a>.</p>
+        <button class="btn" value="close">Back to the water</button>
       </form>
     </dialog>
   </main>
-
-  <noscript>
-    <style>.gate__actions,.gate__note{display:none}.gate__fallback{display:block!important}.poem{display:block!important}</style>
-  </noscript>
+  <noscript><style>.gate__actions,.gate__note{display:none}.gate__fallback{display:block!important}</style></noscript>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

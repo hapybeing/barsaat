@@ -1,0 +1,438 @@
+import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { mat } from './common';
+import { centre, halfWidth, weights, hash, hash2, STARTS } from './path';
+
+// Lit windows, shared by the walls and by their reflections in the water.
+export const windowGLSL = /* glsl */ `
+vec3 windowLight(float along, float y, float side) {
+  if (y < 1.7) return vec3(0.0);
+  side = side > 0.0 ? 1.0 : -1.0; // interpolated values wobble; hash inputs must be exact
+  vec2 g = vec2(along / 2.3 + side * 0.37, (y - 1.7) / 2.7);
+  vec2 id = floor(g);
+  vec2 f = fract(g);
+  float h = hash21(id + side * 37.0);
+  float inWin = step(0.27, f.x) * step(f.x, 0.73) * step(0.18, f.y) * step(f.y, 0.72);
+  float lit = step(0.6, h);
+  vec3 c = mix(vec3(1.0, 0.52, 0.22), vec3(1.0, 0.82, 0.55), fract(h * 7.3));
+  if (h > 0.94) c = vec3(0.45, 0.62, 1.0) * (0.75 + 0.25 * sin(uTime * 9.0 + h * 50.0) * sin(uTime * 2.3));
+  if (h > 0.6 && h < 0.66) c = vec3(0.55, 0.75, 0.7); // a tube light
+  float bars = 0.85 + 0.15 * smoothstep(0.3, 0.7, f.y);
+  float curtain = mix(1.0, 0.45, step(0.5, fract(h * 13.0)) * smoothstep(0.35, 0.55, f.x));
+  return c * inWin * lit * bars * curtain * 1.1;
+}
+`;
+
+export type Light = { p: THREE.Vector3; c: THREE.Vector3; size: number; flicker: number };
+
+const CHUNK = 30;
+const PROFILE_N = 26;
+
+const at = (s: number, side: number, off: number, y: number) =>
+  new THREE.Vector3(centre(s) + side * (halfWidth(s) + off), y, -s);
+
+/** cross-section of one bank at s: PROFILE_N points (outward offset, height) */
+function profile(s: number, side: number): [number, number][] {
+  const w = weights(s);
+  const houseH = 5.2 + Math.floor(hash(Math.floor((s + side * 3.1) / 6.3) + side * 91) * 5) * 1.0;
+  const lane: [number, number][] = [[0, -1.5], [0, houseH]];
+  const canal: [number, number][] = [[0, -1.5], [0, 1.05], [0.45, 1.05], [0.45, 0.75]];
+  const left = side < 0;
+  const ghat: [number, number][] = [[0, -1.5]];
+  if (left) {
+    // eleven stone steps up to a platform
+    for (let k = 0; k < 11; k++) { const x = k * 0.85, y = 0.1 + k * 0.42; ghat.push([x, y], [x + 0.85, y]); }
+  } else ghat.push([0, 0.35], [8, 0.9]);
+  const open: [number, number][] = [[0, -1.5], [0, 0.2], [30, 0.6]];
+  const pad = (p: [number, number][], far: number) => {
+    const last = p[p.length - 1];
+    const out = p.slice();
+    while (out.length < PROFILE_N - 1) out.push([last[0], last[1]]);
+    out.push([far, last[1]]);
+    return out;
+  };
+  const P = [pad(lane, 40), pad(canal, 60), pad(ghat, 80), pad(open, 160)];
+  const r: [number, number][] = [];
+  for (let i = 0; i < PROFILE_N; i++) {
+    let x = 0, y = 0;
+    for (let c = 0; c < 4; c++) { x += P[c][i][0] * w[c]; y += P[c][i][1] * w[c]; }
+    r.push([x, y]);
+  }
+  return r;
+}
+
+// --- materials ------------------------------------------------------------------------------
+
+const bankMat = mat({
+  vertex: /* glsl */ `
+    attribute float aWin;
+    attribute float aStone;
+    attribute float aSide;
+    varying vec3 vW; varying vec3 vN; varying float vWin; varying float vStone; varying float vSide;
+    void main() {
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      vW = w.xyz; vN = normal; vWin = aWin; vStone = aStone; vSide = aSide;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragment: /* glsl */ `
+    varying vec3 vW; varying vec3 vN; varying float vWin; varying float vStone; varying float vSide;
+    ${windowGLSL}
+    void main() {
+      vec3 n = normalize(vN);
+      float vert = 1.0 - abs(n.y);
+      // limewashed plaster in faded colours, streaked by years of monsoons
+      float house = floor((-vW.z) / 6.3 + (vSide > 0.0 ? 3.0 : -3.0));
+      vec3 wash = mix(vec3(0.42, 0.36, 0.30), vec3(0.30, 0.36, 0.38), hash1(house * 3.7));
+      wash = mix(wash, vec3(0.45, 0.30, 0.28), step(0.7, hash1(house * 9.1)));
+      float streak = fbm(vec2(vW.x * 0.3 - vW.z * 0.9, vW.y * 0.25) * vec2(3.0, 0.4));
+      vec3 alb = wash * (0.55 + 0.6 * streak);
+      alb = mix(alb, vec3(0.12, 0.15, 0.10), smoothstep(1.2, 0.0, vW.y) * 0.8); // moss at the waterline
+      vec3 stone = vec3(0.48, 0.40, 0.33) * (0.7 + 0.5 * fbm(vW.xz * 1.7));
+      alb = mix(alb, stone, vStone);
+      alb = mix(alb * 0.55, alb, vert); // tops and steps catch less of the light from the lane
+      alb *= mix(1.0, 0.62, uWet);       // wet surfaces go dark
+
+      vec3 lit = uAmbient * 2.2 + uFogColor * 1.1 + vec3(0.06, 0.05, 0.06) * smoothstep(0.0, 6.0, vW.y) + vec3(0.55, 0.55, 0.75) * uFlash * (0.4 + 0.6 * max(dot(n, normalize(uFlashDir)), 0.0));
+      lit += pointLights(vW, n);
+      vec3 col = alb * lit;
+      // wet sheen from the lamps
+      vec3 V = normalize(cameraPosition - vW);
+      col += pointLights(vW, reflect(-V, n)) * 0.04 * uWet;
+      if (abs(n.z) < 0.35 && vert > 0.7 && vWin > 0.01) col += windowLight(-vW.z, vW.y, vSide) * vWin;
+      col = applyFog(col, length(cameraPosition - vW));
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+
+const propMat = mat({
+  vertex: /* glsl */ `
+    attribute vec3 color;
+    attribute float aEmit;
+    attribute float aWin;
+    varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vE; varying float vWin;
+    void main() {
+      vec4 w = modelMatrix * vec4(position, 1.0);
+      vW = w.xyz; vN = normal; vC = color; vE = aEmit; vWin = aWin;
+      gl_Position = projectionMatrix * viewMatrix * w;
+    }`,
+  fragment: /* glsl */ `
+    varying vec3 vW; varying vec3 vN; varying vec3 vC; varying float vE; varying float vWin;
+    ${windowGLSL}
+    void main() {
+      vec3 n = normalize(vN);
+      vec3 alb = vC * mix(1.0, 0.65, uWet) * (0.8 + 0.4 * vnoise(vW.xz * 2.0 + vW.y));
+      vec3 lit = uAmbient + vec3(0.55, 0.55, 0.75) * uFlash * (0.4 + 0.6 * max(dot(n, normalize(uFlashDir)), 0.0));
+      lit += pointLights(vW, n);
+      vec3 col = alb * lit + vC * vE * (0.9 + 0.1 * sin(uTime * 13.0 + vW.x * 4.0));
+      if (vWin > 0.5 && abs(n.y) < 0.3) {
+        float along = abs(n.x) > abs(n.z) ? -vW.z : vW.x;
+        col += windowLight(along, vW.y, sign(n.x + n.z)) * 0.9;
+      }
+      col = applyFog(col, length(cameraPosition - vW));
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+});
+
+const spoutMat = mat({
+  transparent: true,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+  vertex: /* glsl */ `
+    varying vec3 vW; varying vec2 vUv;
+    void main() { vUv = uv; vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragment: /* glsl */ `
+    varying vec3 vW; varying vec2 vUv;
+    void main() {
+      float edge = smoothstep(0.0, 0.3, vUv.x) * smoothstep(1.0, 0.7, vUv.x);
+      float streaks = vnoise(vec2(vUv.x * 9.0, vUv.y * 3.0 + uTime * 9.0));
+      float a = edge * (0.25 + 0.6 * streaks) * (0.4 + 0.6 * uRain);
+      vec3 col = (uAmbient * 1.6 + pointLights(vW, vec3(0.0, 0.0, 1.0)) * 1.3 + uFlash * 0.6) * vec3(0.8, 0.85, 0.9);
+      col = applyFog(col, length(cameraPosition - vW));
+      gl_FragColor = vec4(col, a * 0.75);
+    }`,
+});
+
+const cableMat = mat({
+  vertex: /* glsl */ `varying vec3 vW; void main(){ vec4 w = modelMatrix*vec4(position,1.0); vW=w.xyz; gl_Position=projectionMatrix*viewMatrix*w; }`,
+  fragment: /* glsl */ `varying vec3 vW; void main(){ vec3 c = vec3(0.01) + uFlash * 0.05; gl_FragColor = vec4(applyFog(c, length(cameraPosition - vW)), 1.0); }`,
+});
+
+// --- prop builder ---------------------------------------------------------------------------
+
+class Props {
+  parts: THREE.BufferGeometry[] = [];
+  add(g: THREE.BufferGeometry, m: THREE.Matrix4, color: THREE.ColorRepresentation, emit = 0, win = 0) {
+    const geo = (g.index ? g.toNonIndexed() : g.clone()).applyMatrix4(m);
+    geo.deleteAttribute('uv');
+    if (!geo.getAttribute('normal')) geo.computeVertexNormals();
+    const n = geo.getAttribute('position').count;
+    const c = new THREE.Color(color);
+    const col = new Float32Array(n * 3), e = new Float32Array(n).fill(emit), w = new Float32Array(n).fill(win);
+    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aEmit', new THREE.BufferAttribute(e, 1));
+    geo.setAttribute('aWin', new THREE.BufferAttribute(w, 1));
+    this.parts.push(geo);
+  }
+  build() { return this.parts.length ? mergeGeometries(this.parts, false) : null; }
+}
+
+const M = (pos: THREE.Vector3, rotY = 0, sx = 1, sy = 1, sz = 1) =>
+  new THREE.Matrix4().compose(pos, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)), new THREE.Vector3(sx, sy, sz));
+
+// shared primitive shapes
+const G = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  cyl: new THREE.CylinderGeometry(0.5, 0.5, 1, 7),
+  bulb: new THREE.SphereGeometry(0.5, 8, 6),
+  canopy: new THREE.IcosahedronGeometry(1, 1),
+  cone: new THREE.ConeGeometry(1, 1, 10, 1, true),
+  shikhara: (() => {
+    const pts: THREE.Vector2[] = [];
+    for (let i = 0; i <= 14; i++) {
+      const t = i / 14;
+      pts.push(new THREE.Vector2(1.55 * Math.pow(1 - t, 0.75) * (1 - 0.08 * Math.sin(t * 40)) + 0.12, t * 7.5));
+    }
+    return new THREE.LatheGeometry(pts, 8);
+  })(),
+  amalaka: new THREE.SphereGeometry(0.55, 12, 6).scale(1, 0.38, 1),
+};
+G.canopy.translate(0, 0, 0);
+
+function bridge(hw: number) {
+  const span = hw * 2 + 8;
+  const s = new THREE.Shape();
+  s.moveTo(-span / 2, -1.5); s.lineTo(span / 2, -1.5); s.lineTo(span / 2, 3.5); s.lineTo(-span / 2, 3.5); s.lineTo(-span / 2, -1.5);
+  const hole = new THREE.Path();
+  const rx = hw + 0.6, ry = 2.75;
+  hole.moveTo(rx, -1.5);
+  for (let i = 0; i <= 24; i++) { const a = (i / 24) * Math.PI; hole.lineTo(Math.cos(a) * rx, -1.5 + Math.sin(a) * (ry + 1.5)); }
+  hole.lineTo(-rx, -1.5); hole.lineTo(rx, -1.5);
+  s.holes.push(hole);
+  const g = new THREE.ExtrudeGeometry(s, { depth: 2.6, bevelEnabled: false, curveSegments: 6 });
+  g.translate(0, 0, -1.3);
+  return g;
+}
+
+// --- chunks ---------------------------------------------------------------------------------
+
+type Chunk = { group: THREE.Group; lights: Light[]; temples: number[] };
+
+export class Banks {
+  root = new THREE.Group();
+  chunks = new Map<number, Chunk>();
+  lights: Light[] = [];
+  temples: number[] = [];
+  dirty = true;
+
+  update(s: number) {
+    const first = Math.floor((s - 20) / CHUNK), last = Math.floor((s + 230) / CHUNK);
+    for (const [k, c] of this.chunks) if (k < first || k > last) {
+      this.root.remove(c.group);
+      c.group.traverse(o => { if ((o as THREE.Mesh).geometry) (o as THREE.Mesh).geometry.dispose(); });
+      this.chunks.delete(k); this.dirty = true;
+    }
+    for (let k = Math.max(0, first); k <= last; k++) if (!this.chunks.has(k)) {
+      const c = this.build(k); this.chunks.set(k, c); this.root.add(c.group); this.dirty = true;
+      break; // at most one chunk per frame, so there's never a hitch
+    }
+    if (this.dirty) {
+      this.lights = []; this.temples = [];
+      for (const c of this.chunks.values()) { this.lights.push(...c.lights); this.temples.push(...c.temples); }
+    }
+  }
+
+  /** build every chunk in range now (on start and after a jump) */
+  prime(s: number) { for (let i = 0; i < 12; i++) this.update(s); }
+
+  reset() {
+    for (const c of this.chunks.values()) this.root.remove(c.group);
+    this.chunks.clear(); this.dirty = true;
+  }
+
+  private build(k: number): Chunk {
+    const s0 = k * CHUNK, s1 = s0 + CHUNK;
+    const group = new THREE.Group();
+    const lights: Light[] = [];
+    const temples: number[] = [];
+    const props = new Props();
+
+    // the two banks as ribbons of cross-sections every half metre
+    for (const side of [-1, 1]) {
+      const pos: number[] = [], win: number[] = [], stone: number[] = [];
+      const step = 0.5, rows = Math.round(CHUNK / step) + 1;
+      const sections: [number, number][][] = [];
+      for (let i = 0; i < rows; i++) sections.push(profile(s0 + i * step, side));
+      for (let i = 0; i < rows - 1; i++) {
+        const sa = s0 + i * step, sb = sa + step;
+        const wa = weights(sa), wb = weights(sb);
+        for (let j = 0; j < PROFILE_N - 1; j++) {
+          const a0 = sections[i][j], a1 = sections[i][j + 1], b0 = sections[i + 1][j], b1 = sections[i + 1][j + 1];
+          const A = at(sa, side, a0[0], a0[1]), B = at(sa, side, a1[0], a1[1]), C = at(sb, side, b0[0], b0[1]), D = at(sb, side, b1[0], b1[1]);
+          // wind so the faces look at the river
+          const tri = side < 0 ? [A, C, B, B, C, D] : [A, B, C, B, D, C];
+          for (const v of tri) pos.push(v.x, v.y, v.z);
+          for (let q = 0; q < 6; q++) {
+            const w = q < 2 || q === 3 ? wa : wb;
+            win.push(w[0]);
+            stone.push(side < 0 ? w[2] : w[2] * 0.6);
+          }
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('aWin', new THREE.Float32BufferAttribute(win, 1));
+      g.setAttribute('aStone', new THREE.Float32BufferAttribute(stone, 1));
+      g.setAttribute('aSide', new THREE.Float32BufferAttribute(new Float32Array(stone.length).fill(side), 1));
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, bankMat);
+      m.frustumCulled = false;
+      group.add(m);
+    }
+
+    const warm = (i: number) => new THREE.Vector3(1.0, 0.62, 0.3).multiplyScalar(i);
+    const cables: number[] = [];
+    const spouts: number[] = [], spoutUv: number[] = [];
+
+    for (let s = s0; s < s1; s += 1) {
+      const w = weights(s);
+      const r = hash(s * 1.31 + 7);
+      const hw = halfWidth(s);
+
+      // the lane: bulbs on brackets, drainpipes pouring off the roofs, cables overhead
+      if (w[0] > 0.5) {
+        if (Math.floor(s) % 13 === 0) {
+          const side = hash(s) > 0.5 ? 1 : -1;
+          const p = at(s, side, -0.35, 3.1 + hash(s + 2) * 1.2);
+          props.add(G.bulb, M(p, 0, 0.13, 0.13, 0.13), '#ffd9a0', 2.2);
+          props.add(G.box, M(at(s, side, -0.18, p.y + 0.12), 0, 0.36, 0.04, 0.04), '#222');
+          lights.push({ p, c: warm(1.4), size: 1.2, flicker: hash(s + 5) > 0.85 ? 1 : 0 });
+        }
+        if (r > 0.9) {
+          const side = hash(s + 9) > 0.5 ? 1 : -1;
+          const top = 4.2 + hash(s + 4) * 2.5;
+          const a = at(s, side, -0.25, top), b = at(s, side, -0.55, 0);
+          const d = 0.07;
+          // a falling sheet of water, two crossed quads
+          for (const [ox, oz] of [[d, 0], [0, d]]) {
+            spouts.push(a.x - ox, a.y, a.z - oz, a.x + ox, a.y, a.z + oz, b.x + ox * 2.5, b.y, b.z + oz * 2.5,
+              a.x - ox, a.y, a.z - oz, b.x + ox * 2.5, b.y, b.z + oz * 2.5, b.x - ox * 2.5, b.y, b.z - oz * 2.5);
+            spoutUv.push(0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1);
+          }
+          props.add(G.cyl, M(at(s, side, -0.12, top + 0.2), 0, 0.12, 0.6, 0.12), '#2a2622');
+        }
+        if (r < 0.12) {
+          const y = 4.5 + hash(s + 3) * 3.5;
+          const L = at(s, -1, -0.05, y), R = at(s + (hash(s) - 0.5) * 3, 1, -0.05, y + (hash(s + 1) - 0.5));
+          let prev = L;
+          for (let i = 1; i <= 10; i++) {
+            const t = i / 10;
+            const p = L.clone().lerp(R, t); p.y -= Math.sin(t * Math.PI) * 0.45;
+            cables.push(prev.x, prev.y, prev.z, p.x, p.y, p.z); prev = p;
+          }
+        }
+      }
+
+      // the canal: lamp posts, trees, houses set back, a bridge now and then
+      if (w[1] > 0.5) {
+        if (Math.floor(s) % 17 === 0) {
+          const side = Math.floor(s / 17) % 2 ? 1 : -1;
+          const base = at(s, side, 0.25, 1.05);
+          props.add(G.cyl, M(base.clone().setY(1.05 + 2.1), 0, 0.09, 4.2, 0.09), '#1b1d22');
+          const head = at(s, side, -0.45, 5.15);
+          props.add(G.box, M(at(s, side, -0.1, 5.25), 0, 0.75, 0.05, 0.05), '#1b1d22');
+          props.add(G.bulb, M(head, 0, 0.17, 0.12, 0.17), '#ffe1b0', 2.6);
+          lights.push({ p: head, c: warm(2.0), size: 1.6, flicker: 0 });
+        }
+        if (r > 0.72) {
+          const side = hash(s + 11) > 0.5 ? 1 : -1;
+          const p = at(s, side, 1.6 + hash(s + 12) * 5, 0.75);
+          const h = 3 + hash(s + 13) * 3;
+          props.add(G.cyl, M(p.clone().setY(0.75 + h / 2), 0, 0.25, h, 0.25), '#16130f');
+          const cs = 1.6 + hash(s + 14) * 1.6;
+          props.add(G.canopy, M(p.clone().setY(0.75 + h + cs * 0.4), hash(s) * 6, cs, cs * 0.8, cs), '#0f1a12');
+          props.add(G.canopy, M(p.clone().add(new THREE.Vector3(cs * 0.5, h + cs * 0.1, 0.3)), hash(s + 1) * 6, cs * 0.7, cs * 0.6, cs * 0.7), '#122015');
+        }
+        if (Math.floor(s) % 9 === 0 && hash(s + 40) > 0.25) {
+          const side = hash(s + 41) > 0.5 ? 1 : -1;
+          const H = 4 + Math.floor(hash(s + 42) * 4) * 1.6;
+          const p = at(s, side, 7 + hash(s + 43) * 4, 0.7 + H / 2);
+          props.add(G.box, M(p, 0, 7, H, 6), hash(s + 44) > 0.5 ? '#3d3632' : '#2f3537', 0, 1);
+        }
+        if (Math.floor(s) % 95 === 40) {
+          const g = bridge(hw);
+          const p = new THREE.Vector3(centre(s), 0, -s);
+          props.add(g, M(p, 0), '#3a3430');
+          for (const side of [-1, 1]) {
+            const lp = new THREE.Vector3(centre(s) + side * (hw + 0.4), 4.1, -s);
+            props.add(G.bulb, M(lp, 0, 0.16, 0.16, 0.16), '#ffe0a8', 2.6);
+            props.add(G.cyl, M(lp.clone().setY(3.75), 0, 0.06, 0.6, 0.06), '#15161a');
+            lights.push({ p: lp, c: warm(2.2), size: 1.7, flicker: 0 });
+          }
+        }
+      }
+
+      // the ghat: temples, parasols, lamps on the steps; the far bank's lights
+      if (w[2] > 0.5) {
+        if (Math.floor(s) % 46 === 8) {
+          const base = at(s, -1, 10.5, 4.3);
+          props.add(G.box, M(base.clone().setY(4.3 + 0.9), 0, 4.2, 1.8, 4.2), '#4a3e34');
+          props.add(G.box, M(base.clone().setY(4.3 + 2.4), 0, 3.4, 1.2, 3.4), '#55473b');
+          props.add(G.shikhara, M(base.clone().setY(4.3 + 3.0), 0.3), '#5c4b3d');
+          props.add(G.amalaka, M(base.clone().setY(4.3 + 10.4), 0, 1, 1, 1), '#5c4b3d');
+          props.add(G.cyl, M(base.clone().setY(4.3 + 11.4), 0, 0.03, 1.8, 0.03), '#222');
+          props.add(G.box, M(base.clone().add(new THREE.Vector3(0.35, 11.9, 0)), 0, 0.7, 0.4, 0.02), '#a2421c');
+          const door = at(s, -1, 8.35, 5.2);
+          props.add(G.box, M(door, 0, 0.05, 1.3, 0.8), '#ffb860', 2.4);
+          lights.push({ p: door.clone().setX(door.x + 0.6), c: warm(3.2), size: 2.4, flicker: 1 });
+          temples.push(s);
+        }
+        if (r > 0.86) {
+          const k = Math.floor(hash(s + 21) * 9);
+          const p = at(s, -1, k * 0.85 + 0.45, 0.1 + k * 0.42 + 0.01);
+          const flame = p.clone().setY(p.y + 0.12);
+          props.add(G.bulb, M(flame, 0, 0.05, 0.08, 0.05), '#ffc070', 3);
+          lights.push({ p: flame, c: warm(0.9), size: 0.7, flicker: 1 });
+        }
+        if (Math.floor(s) % 11 === 3) {
+          const k = 10 + Math.floor(hash(s + 30) * 3);
+          const p = at(s, -1, Math.min(k, 10.5) * 0.85 + 0.3, 4.3);
+          props.add(G.cyl, M(p.clone().setY(4.3 + 1.2), 0, 0.07, 2.4, 0.07), '#2b2520');
+          props.add(G.cone, M(p.clone().setY(4.3 + 2.55), hash(s) * 3, 1.7, 0.65, 1.7), hash(s + 31) > 0.5 ? '#6b5a3c' : '#5a3f35');
+        }
+        if (r > 0.55) {
+          const p = at(s, 1, 6 + hash(s + 50) * 40, 1.2 + hash(s + 51) * 3);
+          lights.push({ p, c: warm(0.5 + hash(s + 52)).multiplyScalar(0.7), size: 0.9 + hash(s + 53), flicker: 0 });
+        }
+      }
+
+      // open water: only the far shore, pricked with lights
+      if (w[3] > 0.5 && r > 0.6) {
+        const side = hash(s + 60) > 0.5 ? 1 : -1;
+        const p = at(s, side, 2 + hash(s + 61) * 30, 0.8 + hash(s + 62) * 2);
+        lights.push({ p, c: warm(0.4 + hash(s + 63) * 0.5), size: 1 + hash(s + 64), flicker: 0 });
+      }
+    }
+
+    const pg = props.build();
+    if (pg) { const m = new THREE.Mesh(pg, propMat); m.frustumCulled = false; group.add(m); }
+    if (cables.length) {
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(cables, 3));
+      const l = new THREE.LineSegments(g, cableMat); l.frustumCulled = false; group.add(l);
+    }
+    if (spouts.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(spouts, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(spoutUv, 2));
+      const m = new THREE.Mesh(g, spoutMat); m.frustumCulled = false; m.renderOrder = 2; group.add(m);
+    }
+    void STARTS; void hash2;
+    return { group, lights, temples };
+  }
+}
+
+/** wall heights either side at s, for the water's reflections */
+export function wallHeights(s: number): [number, number] {
+  const top = (p: [number, number][]) => p.reduce((m, q) => (q[0] < 12 ? Math.max(m, q[1]) : m), 0);
+  return [top(profile(s, -1)), top(profile(s, 1))];
+}

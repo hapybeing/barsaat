@@ -1,52 +1,31 @@
 # Barsaat · बरसात
 
-**A monsoon evening at a window over the Ganga, in Bhagalpur.**
-Live: https://hapybeing.github.io/barsaat/
+**Live:** https://hapybeing.github.io/barsaat/
 
-You stand at an upstairs window above a ghat. The glass is fogged. Wipe it with your finger to see the river, write on it, hold still to breathe a fresh cloud onto it. Over about three minutes a storm builds, breaks and clears. Then diyas float out on the water, a temple bell rings across the river, and it starts to rain again.
+Write a wish on a page torn from a school notebook. Fold it into a paper boat. Then steer it through one monsoon night: down a flooded lane between houses, under the bridges of a canal, through a lightning storm on a wide river lined with temples and ghats, and out to open water where the clouds tear open onto the moon.
 
-There's no menu and no scrolling. The title, the hints and a short Hindi and English poem are all written into the fog by an invisible finger.
+Dark clay lamps float on the way. Steer through them and they catch, fall in behind your boat, and each one plays the next note of a phrase in Raag Megh, the raag of rain clouds. A good run ends with a long procession of light on still water.
 
-## How it works
+## What makes it
 
-| Piece | What it does |
-| --- | --- |
-| `web/src/gl/shaders.ts` | All the GLSL: drop sprites, the fog simulation, and the composite where drops act as lenses |
-| `web/src/gl/renderer.ts` | Raw WebGL2, no engine. Four passes a frame: bead layer, water map, fog step, composite |
-| `web/src/sim/drops.ts` | Rain on glass, simulated drop by drop: small drops cling, big ones slide, stall, merge and leave beaded trails |
-| `web/src/weather.ts` | The single clock. Rain, fog regrowth, the grade, lightning, lamps, poem and sound all read from it |
-| `web/src/input.ts` | Touch, mouse and keyboard become wipe strokes and breath. Multi-touch works |
-| `web/src/writer.ts` | Writes text into the fog behind a wobbling pen front |
-| `web/src/audio.ts` | Every sound is synthesised live: rain, ticks on the pane, finger squeak, breath, thunder that arrives after the flash, a temple bell, crickets |
+- **Nothing is a photo or a recording.** The city, the river and the sky are generated from the distance you have travelled, chunk by chunk, so the journey is endless and costs almost nothing to stream.
+- **Your writing is the boat.** The page canvas becomes the boat's texture. Every vertex knows where it lies on the flat sheet and where it lies on the boat, and the fold is a staggered, arcing blend between the two, so your ink travels with the paper. The paper slowly soaks as it rains.
+- **Water in one shader.** A ring for every raindrop, wind chop, a Kelvin-style wake, reflections of the walls with their lit windows (ray-cast against the channel), the moon's path, and long broken streaks under every lamp from glossy reflection on a rough surface.
+- **Lightning** grown by midpoint displacement with forks, re-striking along one channel, lighting the clouds from inside; thunder arrives after the flash, later for distant strikes.
+- **Sound, all synthesised:** rain on tin roofs and water, the lap of the current, paper creasing, a tanpura drone (Pa, Sa, Sa, low Sa), santoor-like notes for each lamp, temple bells as you pass, crickets once it clears.
+- **Built for a tablet:** adaptive resolution, one shared light list (16 nearest lights), instanced rain and glows, no post-processing pass.
 
-**Realism comes from one photograph, and the life comes from code.** The river and temple are a single plate, always seen through the glass. Everything procedural is the stuff that moves: water, refraction, fog, light. That rule came out of the teardown of my last piece (`docs/TEARDOWN.md`).
+## How to play
 
-### Rendering details
+- Touch and hold to steer toward your finger; keep holding to blow the boat along.
+- Keyboard: ← → steer, space blows.
+- At the end: keep drifting (the rain comes and goes forever), fold another, or save a postcard.
 
-- The water map is stored premultiplied (normal, thickness × coverage), so drops can be faded and erased with plain blending without corrupting their normals.
-- The fog is a ping-pong simulation at half resolution. It regrows unevenly (faster at the bottom of the pane), clears where water runs, takes the shape of a finger with a ragged edge, and keeps a separate breath channel that's whiter and evaporates faster.
-- Each drop refracts a small, upside-down, sharp view of the world, with a darker rim and highlights from the room lamp behind you.
-- Output resolution adapts to the device: it steps down when frames run long and recovers slowly. The simulations keep their state.
-- Rendering pauses when the tab is hidden.
+## Code
 
-### Accessibility
+- `web/src/main.ts` the state machine (gate, page, fold, sail, finale, drift), camera, lights, input
+- `web/src/world/` path (the river as a function of distance), water, sky, banks (lane, canal, ghat, open), boat (the fold), diyas, rain, glows, lightning
+- `web/src/page.ts` the notebook page you write on
+- `web/src/audio.ts` the synthesised score
 
-- Readable with no JavaScript: the view from the window and the poem.
-- Without WebGL2 it falls back to the same still view and the poem.
-- The poem is announced to screen readers as it's written.
-- Keyboard: arrow keys move your finger, space breathes, `n` moves the weather on.
-- Lightning is two or three soft flickers, never faster than about 8 Hz, with long gaps. It's softened automatically with `prefers-reduced-motion`, and there's a toggle.
-
-## Build
-
-```
-npm install
-npm run build   # type-checks, builds web/ into dist/, then publishes dist/ to the repo root for GitHub Pages
-```
-
-GitHub Pages serves the repo root (main branch, `/`). Source lives in `web/`, `tools/icons.py` makes the icons.
-
-## Credits
-
-Made by Gaurang Kumar in Bhagalpur, on an Android tablet.
-Type: Tiro Devanagari Hindi (Tiro Typeworks) and Cormorant Garamond (Christian Thalmann), both SIL Open Font License.
+Vite + TypeScript + three.js with hand-written GLSL. `npm run build` builds to `dist/`, and `scripts/postbuild.mjs` publishes it to the repo root for GitHub Pages.

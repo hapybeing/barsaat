@@ -9,6 +9,7 @@ export default defineConfig({
     outDir: '../dist',
     emptyOutDir: true,
     target: 'es2020',
+    chunkSizeWarningLimit: 900,
     cssCodeSplit: false,
     modulePreload: { polyfill: false },
     assetsInlineLimit: 0,
