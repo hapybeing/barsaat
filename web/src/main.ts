@@ -12,6 +12,7 @@ import { makeBoat, SHEET_H } from './world/boat';
 import { Glows } from './world/glows';
 import { Diyas } from './world/diyas';
 import { Lightning } from './world/lightning';
+import { makeSkyline } from './world/skyline';
 import { centre, halfWidth, slope, weights, rainAt, clearAt, fogAt, speedAt, rigAt, chapterAt, STARTS, END } from './world/path';
 import { Page } from './page';
 import { Sound } from './audio';
@@ -45,12 +46,13 @@ const sky = makeSky();
 const water = makeWater();
 const rain = makeRain(5000);
 const banks = new Banks();
-const staticGlows = new Glows(1600);
+const staticGlows = new Glows(3200);
 const flameGlows = new Glows(320, true);
 const haloGlows = new Glows(340);
 const diyas = new Diyas(260);
 const lightning = new Lightning();
-scene.add(sky, water.mesh, banks.root, diyas.bowls, lightning.mesh, rain.mesh, staticGlows.mesh, haloGlows.mesh, flameGlows.mesh);
+const skyline = makeSkyline();
+scene.add(sky, skyline.mesh, water.mesh, banks.root, diyas.bowls, lightning.mesh, rain.mesh, staticGlows.mesh, haloGlows.mesh, flameGlows.mesh);
 
 const page = new Page($<HTMLCanvasElement>('page'));
 const paperTex = new THREE.CanvasTexture(page.canvas);
@@ -83,6 +85,7 @@ let lastChapter = -1;
 let templeRung = new Set<number>();
 let autopilot = params.has('auto');
 let hintDiyaShown = false;
+let firstStrike = -1;
 
 const boatPos = new THREE.Vector3();
 const camPos = new THREE.Vector3(0, 1, 0);
@@ -221,6 +224,9 @@ function placeSheet(r: DOMRect) {
 
 function startSail() {
   mode = 'sail'; modeT = 0;
+  speed = speedAt(s);
+  diyas.startAt(s);
+  firstStrike = 1.6;
   sound.splash();
   hint(matchMedia('(pointer: coarse)').matches ? 'Touch and hold to steer. Holding longer blows it along.' : 'Hold the mouse to steer, or use the arrow keys. Space blows it along.', 6500);
 }
@@ -394,10 +400,11 @@ function step(dt: number) {
   shared.uFogDensity.value = mode === 'drift' ? 0.009 + r * 0.01 : fogAt(s);
   const fog = new THREE.Color('#1d1b26').lerp(new THREE.Color('#0f1424'), clear);
   shared.uFogColor.value.copy(fog);
-  shared.uAmbient.value.setRGB(0.085, 0.085, 0.12).lerp(new THREE.Color(0.07, 0.09, 0.15), clear);
+  shared.uAmbient.value.setRGB(0.11, 0.105, 0.14).lerp(new THREE.Color(0.07, 0.09, 0.15), clear);
 
   // lightning: in the late canal and the ghat, the storm's heart
-  const storm = Math.max(0, w[2] * (1 - clear)) + w[1] * 0.25;
+  if (firstStrike > 0 && mode === 'sail') { firstStrike -= dt; if (firstStrike <= 0) { strike(); nextStrike = 7; } }
+  const storm = Math.max(0, w[2] * (1 - clear)) + w[1] * 0.3 + w[0] * 0.25;
   if ((mode === 'sail' || mode === 'gate' || mode === 'page') && storm > 0.2) {
     nextStrike -= dt * storm;
     if (nextStrike <= 0) { strike(); nextStrike = 4 + Math.random() * 8; }
@@ -413,6 +420,13 @@ function step(dt: number) {
 
   banks.update(s);
   boat.uniforms.uSoak.value = soak;
+
+  // sound: the beds every frame, and the score follows the journey
+  const section = mode === 'gate' || mode === 'page' || mode === 'fold' ? 0 : mode === 'finale' || mode === 'drift' ? 4 : [1, 2, 3, 4][chapterAt(s)];
+  sound.setSection(section);
+  sound.update(dt, r, w[0], mode === 'sail' || mode === 'drift' ? speed : 0.6, blow > 0.3, 1, clear * (mode === 'drift' || mode === 'finale' || w[3] > 0.5 ? 1 : 0));
+  skyline.uniforms.uFar.value = w[0] * 1 + w[1] * 1 + w[2] * 0.95 + w[3] * 0.3;
+  water.uniforms.uFar.value = (w[1] + w[2] * 0.95 + w[3] * 0.3);
   boat.uniforms.uGlow.value = Math.min(0.5, diyas.following * 0.05);
 }
 
@@ -453,7 +467,7 @@ const diyaLight = (x: number, y: number, z: number, b: number): Light => ({ p: n
 function updateLights() {
   if (banks.dirty) {
     staticGlows.begin();
-    for (const l of banks.lights) staticGlows.push(l.p, l.c, l.size * 1.6, l.flicker);
+    for (const l of banks.lights) staticGlows.push(l.p, l.c, l.size * (l.glowOnly ? 1 : 1.6), l.flicker);
     staticGlows.end();
     banks.dirty = false;
   }
@@ -479,7 +493,7 @@ function updateLights() {
   camera.getWorldDirection(tmp);
   const focus = tmp.multiplyScalar(6).add(camera.position);
   lightPool.length = 0;
-  for (const l of banks.lights) lightPool.push({ l, d: l.p.distanceToSquared(focus) / (l.c.x + 0.2) });
+  for (const l of banks.lights) if (!l.glowOnly) lightPool.push({ l, d: l.p.distanceToSquared(focus) / (l.c.x + 0.2) });
   for (const l of lamps) lightPool.push({ l, d: l.p.distanceToSquared(focus) / (l.c.x + 0.2) });
   lightPool.sort((a, b) => a.d - b.d);
   for (let i = 0; i < MAX_LIGHTS; i++) {
@@ -582,7 +596,8 @@ if (DEBUG) {
   $('debug').hidden = false;
   const w = window as unknown as Record<string, unknown>;
   w.__ff = (sec: number) => { const n = Math.round(sec * 30); for (let i = 0; i < n; i++) { step(1 / 30); updateCamera(1 / 30); } updateLights(); };
-  w.__go = (to: number) => { s = to; trail.length = 0; banks.reset(); banks.prime(s); diyas.reset(); updateCamera(1); camPos.copy(tmp); };
+  w.__scene = scene;
+  w.__go = (to: number) => { s = to; trail.length = 0; banks.reset(); banks.prime(s); diyas.reset(); diyas.startAt(s); updateCamera(1); camPos.copy(tmp); };
   w.__strike = strike;
   w.__auto = (on: boolean) => { autopilot = on; };
   w.__probe = () => ({ mode, s: Math.round(s), chapter: chapterAt(s), lit, following: diyas.following, diyas: diyas.list.length, lights: banks.lights.length, dpr, fps: worstWindow, rain: shared.uRain.value.toFixed(2) });

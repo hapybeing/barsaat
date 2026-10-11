@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { mat } from './common';
 import { centre, halfWidth, weights, hash, hash2, STARTS } from './path';
+import { facade, PALETTE } from './facades';
 
 // Lit windows, shared by the walls and by their reflections in the water.
 export const windowGLSL = /* glsl */ `
@@ -23,7 +24,7 @@ vec3 windowLight(float along, float y, float side) {
 }
 `;
 
-export type Light = { p: THREE.Vector3; c: THREE.Vector3; size: number; flicker: number };
+export type Light = { p: THREE.Vector3; c: THREE.Vector3; size: number; flicker: number; glowOnly?: boolean };
 
 const CHUNK = 30;
 const PROFILE_N = 26;
@@ -76,16 +77,27 @@ const bankMat = mat({
     }`,
   fragment: /* glsl */ `
     varying vec3 vW; varying vec3 vN; varying float vWin; varying float vStone; varying float vSide;
+    const vec3 PAL[8] = vec3[8](vec3(0.373, 0.561, 0.541), vec3(0.722, 0.478, 0.416), vec3(0.769, 0.643, 0.416), vec3(0.498, 0.561, 0.353), vec3(0.416, 0.498, 0.651), vec3(0.659, 0.624, 0.580), vec3(0.788, 0.722, 0.627), vec3(0.604, 0.416, 0.541));
     ${windowGLSL}
     void main() {
       vec3 n = normalize(vN);
       float vert = 1.0 - abs(n.y);
       // limewashed plaster in faded colours, streaked by years of monsoons
-      float house = floor((-vW.z) / 6.3 + (vSide > 0.0 ? 3.0 : -3.0));
-      vec3 wash = mix(vec3(0.42, 0.36, 0.30), vec3(0.30, 0.36, 0.38), hash1(house * 3.7));
-      wash = mix(wash, vec3(0.45, 0.30, 0.28), step(0.7, hash1(house * 9.1)));
+      float sd = vSide > 0.0 ? 1.0 : -1.0;
+      float house = floor((-vW.z + sd * 3.1) / 6.3);
+      float ph = fract(sin(house * 12.9898 + sd * 78.233) * 43758.5453);
+      int pi = int(floor(ph * 8.0));
+      vec3 wash = PAL[0];
+      for (int i = 1; i < 8; i++) if (i == pi) wash = PAL[i];
+      wash *= 0.62;
+      // patches where the plaster has fallen off and the brick shows
+      float peel = smoothstep(0.62, 0.66, fbm(vW.yz * vec2(0.6, 0.35) + vec2(vW.x * 0.3, house)));
+      vec2 bk = vec2((-vW.z) / 0.23 + floor(vW.y / 0.075) * 0.5, vW.y / 0.075);
+      float mortar = step(0.88, fract(bk.x)) + step(0.8, fract(bk.y));
+      vec3 brick = mix(vec3(0.42, 0.2, 0.14), vec3(0.32, 0.27, 0.23), min(mortar, 1.0));
+      wash = mix(wash, brick, peel * smoothstep(0.5, 2.0, vW.y));
       float streak = fbm(vec2(vW.x * 0.3 - vW.z * 0.9, vW.y * 0.25) * vec2(3.0, 0.4));
-      vec3 alb = wash * (0.55 + 0.6 * streak);
+      vec3 alb = wash * (0.5 + 0.55 * streak) * (1.0 - 0.35 * smoothstep(0.55, 0.9, fbm(vec2(-vW.z * 2.0, vW.y * 0.15))));
       alb = mix(alb, vec3(0.12, 0.15, 0.10), smoothstep(1.2, 0.0, vW.y) * 0.8); // moss at the waterline
       vec3 stone = vec3(0.48, 0.40, 0.33) * (0.7 + 0.5 * fbm(vW.xz * 1.7));
       alb = mix(alb, stone, vStone);
@@ -93,7 +105,10 @@ const bankMat = mat({
       alb *= mix(1.0, 0.62, uWet);       // wet surfaces go dark
 
       vec3 lit = uAmbient * 2.2 + uFogColor * 1.1 + vec3(0.06, 0.05, 0.06) * smoothstep(0.0, 6.0, vW.y) + vec3(0.55, 0.55, 0.75) * uFlash * (0.4 + 0.6 * max(dot(n, normalize(uFlashDir)), 0.0));
-      lit += pointLights(vW, n);
+      vec3 pl = pointLights(vW, n);
+      lit += pl / (1.0 + pl * 0.7);
+      // light spilling up from the lit street and the water below, and a cool sky from above
+      lit += vec3(0.16, 0.11, 0.07) * smoothstep(5.0, 0.0, vW.y) + vec3(0.05, 0.06, 0.09) * max(n.y, 0.0);
       vec3 col = alb * lit;
       // wet sheen from the lamps
       vec3 V = normalize(cameraPosition - vW);
@@ -121,8 +136,11 @@ const propMat = mat({
     void main() {
       vec3 n = normalize(vN);
       vec3 alb = vC * mix(1.0, 0.65, uWet) * (0.8 + 0.4 * vnoise(vW.xz * 2.0 + vW.y));
-      vec3 lit = uAmbient + vec3(0.55, 0.55, 0.75) * uFlash * (0.4 + 0.6 * max(dot(n, normalize(uFlashDir)), 0.0));
-      lit += pointLights(vW, n);
+      vec3 lit = uAmbient * 2.2 + uFogColor * 1.1 + vec3(0.55, 0.55, 0.75) * uFlash * (0.4 + 0.6 * max(dot(n, normalize(uFlashDir)), 0.0));
+      lit += vec3(0.07, 0.08, 0.11) * max(n.y, 0.0) + vec3(0.12, 0.08, 0.05) * smoothstep(9.0, 0.0, vW.y) * (0.4 + 0.6 * max(-n.y, 0.3));
+      vec3 pl = pointLights(vW, n);
+      lit += pl / (1.0 + pl * 0.7);
+      alb *= 0.75;
       vec3 col = alb * lit + vC * vE * (0.9 + 0.1 * sin(uTime * 13.0 + vW.x * 4.0));
       if (vWin > 0.5 && abs(n.y) < 0.3) {
         float along = abs(n.x) > abs(n.z) ? -vW.z : vW.x;
@@ -250,6 +268,78 @@ export class Banks {
     this.chunks.clear(); this.dirty = true;
   }
 
+  /** house fronts for the lane, rows of houses along the canal and on the ghat, boats, fairy lights */
+  private streets(s0: number, s1: number, props: Props, lights: Light[]) {
+    const add = props.add.bind(props);
+    for (const side of [-1, 1]) {
+      // the lane: house segments match the wall heights the bank ribbon uses
+      const L = 6.3;
+      for (let n = Math.floor((s0 + side * 3.1) / L); ; n++) {
+        const a = n * L - side * 3.1, mid = a + L / 2;
+        if (a >= s1) break;
+        if (a < s0) continue;
+        if (weights(mid)[0] < 0.55) continue;
+        const H = 5.2 + Math.floor(hash(n + side * 91) * 5);
+        facade(add, lights, n * 3 + side, mid, L - 0.02, side, 0, 0, H, { ground: 'flood', balcony: 0.45, tank: 0.7, detail: 1 });
+      }
+      // the canal: a row of houses behind the walkway
+      const C = 7.4;
+      for (let n = Math.floor(s0 / C); ; n++) {
+        const a = n * C, mid = a + C / 2;
+        if (a >= s1) break;
+        if (a < s0) continue;
+        if (weights(mid)[1] < 0.5) continue;
+        const r = hash(n * 5.1 + side * 17);
+        if (r < 0.12) continue; // a gap: an alley, a tree
+        const H = 5.5 + Math.floor(hash(n * 2.3 + side) * 4) * 1.7;
+        const off = 2.6 + hash(n * 7.7 + side) * 1.2;
+        const p = at(mid, side, off + 3.5, 0.75 + H / 2);
+        const yaw = -Math.atan(centre(mid + 0.5) - centre(mid - 0.5));
+        props.add(G.box, M(p, yaw, 7, H, C - 0.15), PALETTE[Math.floor(hash(n * 3.3 + side * 5) * PALETTE.length)]);
+        facade(add, lights, n * 7 + side * 3, mid, C - 0.15, side, off, 0.75, H, { ground: hash(n + side * 9) > 0.45 ? 'shop' : 'plinth', balcony: 0.35, tank: 0.8, detail: 0.8 });
+      }
+      // the ghat: houses and dharamshalas above the steps on the left, low houses on the far bank
+      const Gs = 9;
+      for (let n = Math.floor(s0 / Gs); ; n++) {
+        const a = n * Gs, mid = a + Gs / 2;
+        if (a >= s1) break;
+        if (a < s0) continue;
+        if (weights(mid)[2] < 0.5) continue;
+        if (side < 0) {
+          const H = 7 + Math.floor(hash(n * 1.9) * 4) * 2.2;
+          const off = 13.5 + hash(n * 4.4) * 2;
+          const p = at(mid, side, off + 4, 4.3 + H / 2);
+          props.add(G.box, M(p, 0, 8, H, Gs - 0.3), PALETTE[Math.floor(hash(n * 6.1) * PALETTE.length)]);
+          facade(add, lights, n * 11, mid, Gs - 0.3, side, off, 4.3, H, { ground: 'plinth', balcony: 0.5, tank: 0.6, detail: 0.6 });
+          // a wooden boat tied up at the bottom step
+          if (hash(n * 8.8) > 0.4) {
+            const bp = at(mid + 2, side, -0.9, 0.12);
+            props.add(G.box, M(bp, 0.08, 1.1, 0.35, 4.2), '#3a2a1e');
+            props.add(G.box, M(bp.clone().setY(0.32), 0.08, 1.15, 0.06, 4.3), '#4a3626');
+          }
+          // fairy lights strung along the steps, in strands that sag
+          if (hash(n * 3.7) > 0.35) {
+            const y0 = 3.2 + hash(n) * 0.8;
+            const cols = [[1, 0.3, 0.25], [1, 0.8, 0.3], [0.35, 1, 0.5], [0.4, 0.6, 1]];
+            for (let i = 0; i <= 22; i++) {
+              const t = i / 22;
+              const sp = a + t * Gs;
+              const p2 = at(sp, side, 6.5 + Math.sin(t * Math.PI) * 0.4, y0 + 2.2 - Math.sin(t * Math.PI) * 0.7);
+              const c = cols[i % 4];
+              lights.push({ p: p2, c: new THREE.Vector3(c[0], c[1], c[2]).multiplyScalar(0.8), size: 0.32, flicker: 0, glowOnly: true });
+            }
+          }
+        } else {
+          const H = 4 + Math.floor(hash(n * 2.9 + 1) * 3) * 2;
+          const off = 6 + hash(n * 5.5) * 10;
+          const p = at(mid, side, off + 3, 0.9 + H / 2);
+          props.add(G.box, M(p, 0, 6, H, Gs - 1), PALETTE[Math.floor(hash(n * 9.1) * PALETTE.length)]);
+          facade(add, lights, n * 13 + 5, mid, Gs - 1, side, off, 0.9, H, { ground: 'plinth', balcony: 0.2, tank: 0.5, detail: 0.3 });
+        }
+      }
+    }
+  }
+
   private build(k: number): Chunk {
     const s0 = k * CHUNK, s1 = s0 + CHUNK;
     const group = new THREE.Group();
@@ -274,7 +364,7 @@ export class Banks {
           for (const v of tri) pos.push(v.x, v.y, v.z);
           for (let q = 0; q < 6; q++) {
             const w = q < 2 || q === 3 ? wa : wb;
-            win.push(w[0]);
+            win.push(0);
             stone.push(side < 0 ? w[2] : w[2] * 0.6);
           }
         }
@@ -353,12 +443,6 @@ export class Banks {
           props.add(G.canopy, M(p.clone().setY(0.75 + h + cs * 0.4), hash(s) * 6, cs, cs * 0.8, cs), '#0f1a12');
           props.add(G.canopy, M(p.clone().add(new THREE.Vector3(cs * 0.5, h + cs * 0.1, 0.3)), hash(s + 1) * 6, cs * 0.7, cs * 0.6, cs * 0.7), '#122015');
         }
-        if (Math.floor(s) % 9 === 0 && hash(s + 40) > 0.25) {
-          const side = hash(s + 41) > 0.5 ? 1 : -1;
-          const H = 4 + Math.floor(hash(s + 42) * 4) * 1.6;
-          const p = at(s, side, 7 + hash(s + 43) * 4, 0.7 + H / 2);
-          props.add(G.box, M(p, 0, 7, H, 6), hash(s + 44) > 0.5 ? '#3d3632' : '#2f3537', 0, 1);
-        }
         if (Math.floor(s) % 95 === 40) {
           const g = bridge(hw);
           const p = new THREE.Vector3(centre(s), 0, -s);
@@ -413,6 +497,8 @@ export class Banks {
         lights.push({ p, c: warm(0.4 + hash(s + 63) * 0.5), size: 1 + hash(s + 64), flicker: 0 });
       }
     }
+
+    this.streets(s0, s1, props, lights);
 
     const pg = props.build();
     if (pg) { const m = new THREE.Mesh(pg, propMat); m.frustumCulled = false; group.add(m); }

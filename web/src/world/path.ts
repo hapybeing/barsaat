@@ -10,8 +10,8 @@ export const CH = {
 } as const;
 
 /** where each chapter starts, in metres */
-export const STARTS = [0, 210, 480, 820];
-export const END = 1010; // the finale begins here
+export const STARTS = [0, 150, 400, 720];
+export const END = 900; // the finale begins here
 export const CHAPTER_NAMES = ['lane', 'canal', 'ghat', 'open'] as const;
 
 const smooth = (a: number, b: number, x: number) => {
@@ -72,7 +72,7 @@ export function fogAt(s: number) {
 
 /** cruising speed, m/s */
 export function speedAt(s: number) {
-  return mixW(weights(s), [4.2, 4.6, 5.0, 4.4]);
+  return mixW(weights(s), [4.9, 5.0, 5.2, 4.4]);
 }
 
 /** camera rig per chapter: height above water and distance behind the boat */

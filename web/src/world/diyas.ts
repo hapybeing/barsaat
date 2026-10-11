@@ -54,10 +54,12 @@ export class Diyas {
     this.bowls.count = 0;
   }
 
-  reset() {
+  reset(firstDark = STARTS[1] - 30) {
     this.list = []; this.following = 0;
-    this.nextDark = STARTS[1] - 30; this.nextFree = STARTS[2] - 20;
+    this.nextDark = firstDark; this.nextFree = STARTS[2] - 20;
   }
+  /** lamps start right where the boat lands, a few metres ahead */
+  startAt(s: number) { this.list = this.list.filter(d => d.state !== 0); this.nextDark = s + 9; }
 
   /** spawn ahead of the boat as it goes */
   spawn(s: number) {
@@ -69,7 +71,7 @@ export class Diyas {
       const n = hash(z * 3.1) > 0.75 ? 3 : 1;
       const u0 = (hash(z * 1.7) * 2 - 1) * reach;
       for (let i = 0; i < n; i++) this.add({ x: centre(z) + u0 + (i - 1) * 0.5, z: -(z + i * 1.4), y: 0, state: 0, t: 0, k: 0, seed: hash(z + i), vx: 0, vz: 0 });
-      this.nextDark += 7 + hash(z * 5.3) * 7;
+      this.nextDark += (z < STARTS[1] ? 5 : 7) + hash(z * 5.3) * (z < STARTS[1] ? 4 : 7);
     }
     while (this.nextFree < s + 160 && this.nextFree < STARTS[3] + 40) {
       const z = this.nextFree;

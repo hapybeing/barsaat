@@ -23,6 +23,14 @@ export class Sound {
   private droneT = 0;
   private droneString = 0;
   private cricketT = 0;
+  // --- the score ---
+  private music!: GainNode;
+  private flute!: OscillatorNode; private flute2!: OscillatorNode; private fluteGain!: GainNode; private fluteVib!: GainNode; private fluteBreath!: GainNode; private fluteBP!: BiquadFilterNode;
+  private padGain!: GainNode; private padF!: BiquadFilterNode;
+  private nextBeat = 0; private beat = 0; private nextNote = 0; private phraseLeft = 0; private deg = 7;
+  private section = 0;
+  private intensity = 0;
+  musicOn = true;
 
   start() {
     if (this.ctx) { this.ctx.resume(); this.enabled = true; this.fade(0.9); return; }
@@ -60,6 +68,155 @@ export class Sound {
     this.drone.connect(this.master); this.drone.connect(this.verbIn);
     this.crickets = ctx.createGain(); this.crickets.gain.value = 0;
     this.crickets.connect(this.master); this.crickets.connect(this.verbIn);
+    this.buildScore();
+  }
+
+  // ------------------------------------------------------------------ the score
+  // A continuous piece in Raag Megh: tanpura and a warm pad underneath always, a bansuri that
+  // improvises phrases on top, and tabla in keherwa (8 beats) once the boat reaches the canal,
+  // with a deep dhol in the storm. It thins to flute and drone when the sky clears.
+
+  private buildScore() {
+    const ctx = this.ctx!;
+    this.music = ctx.createGain(); this.music.gain.value = 0.85;
+    this.music.connect(this.master);
+    const musicVerb = ctx.createGain(); musicVerb.gain.value = 0.55;
+    this.music.connect(musicVerb); musicVerb.connect(this.verbIn);
+    this.drone.disconnect(); this.drone.connect(this.music);
+
+    // pad: Sa and Pa, low, slowly breathing
+    this.padF = ctx.createBiquadFilter(); this.padF.type = 'lowpass'; this.padF.frequency.value = 500; this.padF.Q.value = 0.7;
+    this.padGain = ctx.createGain(); this.padGain.gain.value = 0;
+    this.padF.connect(this.padGain).connect(this.music);
+    for (const [f, d] of [[SA / 2, -4], [SA / 2, 4], [SA * 0.75, 0], [SA, -6], [SA, 6]] as const) {
+      const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = f; o.detune.value = d;
+      const g = ctx.createGain(); g.gain.value = 0.06;
+      o.connect(g).connect(this.padF); o.start();
+    }
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
+    const lg = ctx.createGain(); lg.gain.value = 220;
+    lfo.connect(lg).connect(this.padF.frequency); lfo.start();
+
+    // bansuri: one breathing voice that glides between notes
+    this.flute = ctx.createOscillator(); this.flute.type = 'sine';
+    this.flute2 = ctx.createOscillator(); this.flute2.type = 'triangle';
+    const vib = ctx.createOscillator(); vib.frequency.value = 5.2;
+    this.fluteVib = ctx.createGain(); this.fluteVib.gain.value = 0;
+    vib.connect(this.fluteVib); this.fluteVib.connect(this.flute.frequency); this.fluteVib.connect(this.flute2.frequency);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2600;
+    this.fluteGain = ctx.createGain(); this.fluteGain.gain.value = 0;
+    const g2 = ctx.createGain(); g2.gain.value = 0.25;
+    this.flute.connect(lp); this.flute2.connect(g2).connect(lp);
+    lp.connect(this.fluteGain).connect(this.music);
+    this.fluteBP = ctx.createBiquadFilter(); this.fluteBP.type = 'bandpass'; this.fluteBP.Q.value = 3;
+    this.fluteBreath = ctx.createGain(); this.fluteBreath.gain.value = 0;
+    this.loop().connect(this.fluteBP).connect(this.fluteBreath).connect(this.music);
+    this.flute.start(); this.flute2.start(); vib.start();
+    this.nextBeat = ctx.currentTime + 0.5; this.nextNote = ctx.currentTime + 1.5;
+  }
+
+  /** section: 0 gate/page, 1 lane, 2 canal, 3 storm, 4 open water/drift */
+  setSection(n: number) { this.section = n; }
+
+  private scheduleScore() {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sec = this.section;
+    const target = this.musicOn ? 1 : 0;
+    this.intensity += (target - this.intensity) * 0.02;
+    this.set(this.music.gain, this.musicOn ? 0.85 : 0, 0.8);
+    this.set(this.padGain.gain, [0.5, 0.45, 0.4, 0.5, 0.6][sec] * 0.5, 3);
+    this.set(this.drone.gain, [0.09, 0.1, 0.1, 0.11, 0.12][sec], 2.5);
+
+    const bpm = [64, 72, 80, 92, 60][sec];
+    const beatLen = 60 / bpm;
+    // tabla, keherwa: dha ge na ti | na ka dhi na
+    while (this.nextBeat < now + 0.25) {
+      const t = this.nextBeat;
+      const b = this.beat % 8;
+      if (sec === 2 || sec === 3) {
+        const loud = sec === 3 ? 1.25 : 0.8;
+        const pat = ['dha', 'ge', 'na', 'ti', 'na', 'ka', 'dhi', 'na'][b];
+        if (pat === 'dha' || pat === 'ge' || pat === 'dhi') this.bayan(t, loud * (pat === 'ge' ? 0.7 : 1));
+        if (pat !== 'ge') this.dayan(t, loud * (pat === 'ka' ? 0.5 : pat === 'ti' ? 0.7 : 1), pat === 'ka');
+        if (sec === 3 && (b === 0 || b === 4)) this.dhol(t);
+        if (sec === 3 && b % 2 === 1 && Math.random() < 0.4) this.dayan(t + beatLen / 2, 0.5, true); // fills
+      }
+      this.beat++;
+      this.nextBeat += beatLen;
+    }
+
+    // bansuri phrases: a walk on Megh's notes, landing on Sa or Pa, then a breath
+    while (this.nextNote < now + 0.3) {
+      const t = this.nextNote;
+      const busy = [0.55, 0.75, 0.85, 0.7, 0.6][sec];
+      if (this.phraseLeft <= 0) {
+        this.phraseLeft = 3 + Math.floor(Math.random() * 6);
+        this.fluteRest(t);
+        this.nextNote += beatLen * (2 + Math.floor(Math.random() * 3)) / busy;
+        continue;
+      }
+      const SC = [1 / 2, 9 / 16, 2 / 3, 3 / 4, 8 / 9, 1, 9 / 8, 4 / 3, 3 / 2, 16 / 9, 2, 9 / 4];
+      const step = [-2, -1, -1, 1, 1, 2][Math.floor(Math.random() * 6)];
+      this.deg = Math.max(2, Math.min(SC.length - 1, this.deg + step + (this.deg > 9 ? -1 : this.deg < 4 ? 1 : 0)));
+      this.phraseLeft--;
+      let durBeats = [0.5, 1, 1, 1, 1.5, 2][Math.floor(Math.random() * 6)];
+      if (this.phraseLeft === 0) { this.deg = Math.random() < 0.6 ? 5 : 8; durBeats = 3 + Math.random() * 2; }
+      this.fluteNote(t, SA * 2 * SC[this.deg], durBeats * beatLen);
+      this.nextNote += durBeats * beatLen;
+    }
+  }
+
+  private fluteNote(t: number, f: number, dur: number) {
+    this.flute.frequency.setTargetAtTime(f, t, 0.035);
+    this.flute2.frequency.setTargetAtTime(f, t, 0.035);
+    this.fluteBP.frequency.setTargetAtTime(f * 2, t, 0.05);
+    const g = this.fluteGain.gain;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(0.11, t, 0.04);
+    g.setTargetAtTime(0.085, t + 0.15, 0.3);
+    this.fluteBreath.gain.setTargetAtTime(0.018, t, 0.03);
+    this.fluteBreath.gain.setTargetAtTime(0.006, t + 0.12, 0.2);
+    // vibrato blooms on long notes
+    this.fluteVib.gain.setTargetAtTime(0, t, 0.02);
+    this.fluteVib.gain.setTargetAtTime(f * 0.012, t + Math.min(0.5, dur * 0.4), 0.25);
+  }
+
+  private fluteRest(t: number) {
+    this.fluteGain.gain.setTargetAtTime(0, t, 0.25);
+    this.fluteBreath.gain.setTargetAtTime(0, t, 0.2);
+    this.fluteVib.gain.setTargetAtTime(0, t, 0.2);
+  }
+
+  private bayan(t: number, amp: number) {
+    const ctx = this.ctx!;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(78, t); o.frequency.exponentialRampToValueAtTime(112, t + 0.12); o.frequency.exponentialRampToValueAtTime(95, t + 0.5);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.32 * amp, t + 0.006); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+    o.connect(g).connect(this.music); o.start(t); o.stop(t + 0.75);
+  }
+
+  private dayan(t: number, amp: number, muted: boolean) {
+    const ctx = this.ctx!;
+    const f = SA * 2;
+    const out = ctx.createGain(); out.gain.value = 0.12 * amp; out.connect(this.music);
+    for (const [r, a, d] of [[1, 1, muted ? 0.06 : 0.45], [2.0, 0.5, muted ? 0.04 : 0.25], [3.0, 0.3, 0.12], [4.2, 0.15, 0.06]] as const) {
+      const o = ctx.createOscillator(); o.frequency.value = f * r;
+      const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(a, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(out); o.start(t); o.stop(t + d + 0.02);
+    }
+    const src = ctx.createBufferSource(); src.buffer = this.noise;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 3000;
+    const ng = ctx.createGain(); ng.gain.setValueAtTime(0.5, t); ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    src.connect(hp).connect(ng).connect(out); src.start(t, Math.random() * 3, 0.05);
+  }
+
+  private dhol(t: number) {
+    const ctx = this.ctx!;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(70, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.35);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.55, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+    o.connect(g).connect(this.music); o.start(t); o.stop(t + 0.65);
   }
 
   stop() { this.enabled = false; if (this.ctx) this.fade(0, 0.6); }
@@ -95,23 +252,22 @@ export class Sound {
   /** every frame. lane: 0..1 how enclosed we are; music: 0..1 drone level */
   update(dt: number, rain: number, lane: number, speed: number, blowing: boolean, music: number, night: number) {
     if (!this.ctx || !this.enabled) return;
-    this.set(this.hiss.gain, 0.02 + rain * 0.15, 1.2);
-    this.set(this.body.gain, 0.03 + rain * rain * 0.38, 1.2);
+    this.set(this.hiss.gain, 0.03 + rain * 0.2, 1.2);
+    this.set(this.body.gain, 0.05 + rain * 0.42, 1.2);
     this.set(this.roof.gain, rain * lane * 0.12, 1.2);
-    this.set(this.lap.gain, 0.05 + Math.min(1, speed / 6) * 0.1, 0.4);
+    this.set(this.lap.gain, 0.1 + Math.min(1, speed / 6) * 0.14, 0.4);
     this.set(this.lapF.frequency, 260 + 160 * Math.sin(this.ctx.currentTime * 1.3) + speed * 30, 0.2);
     this.set(this.blow.gain, blowing ? 0.2 : 0, blowing ? 0.2 : 0.4);
-    this.set(this.drone.gain, music * 0.11, 2.5);
     this.set(this.crickets.gain, night * 0.05, 2);
 
     // drops on tin roofs and on the paper, close by
     this.tickAcc += dt * (rain * rain * (18 + lane * 20) + rain * 3);
     while (this.tickAcc > 1) { this.tickAcc -= 1; this.tick(lane); }
 
-    if (music > 0.02) {
-      this.droneT -= dt;
-      if (this.droneT <= 0) { this.droneT = 1.15; this.pluckDrone(); }
-    }
+    this.droneT -= dt;
+    if (this.droneT <= 0) { this.droneT = 1.15; this.pluckDrone(); }
+    this.scheduleScore();
+    void music;
     if (night > 0.05) {
       this.cricketT -= dt;
       if (this.cricketT <= 0) { this.cricketT = 0.5 + Math.random() * 1.4; this.cricket(); }

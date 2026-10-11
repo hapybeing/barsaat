@@ -180,3 +180,9 @@ html, body {
   .controls { animation: none; }
   .paper.is-on .paper__sheet { animation: none; }
 }
+
+/* a lens vignette and a breath of grain, free on the GPU */
+.vignette {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(ellipse 120% 95% at 50% 46%, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.55) 100%);
+}

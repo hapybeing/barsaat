@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mat, MAX_LIGHTS } from './common';
 import { windowGLSL } from './banks';
+import { skylineGLSL } from './skyline';
 
 // The water is one flat plane that follows the camera. All its life is in the fragment shader:
 // wind ripples, a ring for every raindrop, the boat's wake, the reflection of the walls (with
@@ -16,6 +17,7 @@ export function makeWater() {
     uWalls: { value: new THREE.Vector2(8, 8) },        // left and right wall heights near camera
     uWindows: { value: 1 },
     uMurk: { value: new THREE.Color('#0b0d10') },
+    uFar: { value: 1 },
   };
   const m = mat({
     uniforms,
@@ -34,8 +36,10 @@ export function makeWater() {
       uniform vec2 uWalls;
       uniform float uWindows;
       uniform vec3 uMurk;
+      uniform float uFar;
       varying vec3 vWorld;
       ${windowGLSL}
+      ${skylineGLSL}
 
       // one ring per cell; returns the slope it adds to the surface
       vec2 rings(vec2 p, float scale, float seed) {
@@ -95,7 +99,10 @@ export function makeWater() {
         vec3 hor = mix(vec3(0.20, 0.15, 0.17), vec3(0.09, 0.10, 0.17), uClear);
         vec3 zen = mix(vec3(0.035, 0.04, 0.075), vec3(0.02, 0.03, 0.07), uClear);
         vec3 refl = mix(hor, zen, smoothstep(0.0, 0.5, R.y)) * (1.0 + uFlash * 2.2);
-        float s = -P.z;
+        if (R.y < 0.35 && uFar > 0.01) {
+          vec4 sk = skyline(R, uFar);
+          refl = mix(refl, mix(sk.rgb, uFogColor, mix(0.55, 0.3, uClear)), sk.a);
+        }
         float cx = uRiver.x;
         float hw = uRiver.z;
         float toWall = R.x > 0.0 ? (cx + hw - P.x) : (P.x - (cx - hw));
