@@ -63,7 +63,6 @@ export function facade(add: Adder, lights: Light[], seed: number, sMid: number, 
     if (door) {
       const dx = width * (r(6) - 0.5) * 0.4;
       place(dx, 1.0, 0.02, 1.1, 2.1, 0.06, box, '#3b2f27');
-      if (r(7) > 0.6) place(dx + 0.02, 1.0, 0.05, 0.05, 1.9, 0.02, box, '#ffcf8a', 0.9); // light through the gap
       place(width * (r(6) - 0.5) * 0.4, 2.2, 0.1, 1.4, 0.08, 0.25, box, '#2d2b29');
     }
   }

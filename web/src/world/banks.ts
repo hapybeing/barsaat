@@ -98,6 +98,27 @@ const bankMat = mat({
       wash = mix(wash, brick, peel * smoothstep(0.5, 2.0, vW.y));
       float streak = fbm(vec2(vW.x * 0.3 - vW.z * 0.9, vW.y * 0.25) * vec2(3.0, 0.4));
       vec3 alb = wash * (0.5 + 0.55 * streak) * (1.0 - 0.35 * smoothstep(0.55, 0.9, fbm(vec2(-vW.z * 2.0, vW.y * 0.15))));
+      // posters and painted ads pasted on the lane walls, peeling in the rain
+      {
+        float u = -vW.z / 2.4 + sd * 0.37;
+        float cid = floor(u);
+        float hp = fract(sin(cid * 91.7 + sd * 13.1) * 43758.5453);
+        vec2 pf = vec2(fract(u), (vW.y - 1.3) / 1.5);
+        float inP = step(0.6, hp) * step(0.12, pf.x) * step(pf.x, 0.88) * step(0.0, pf.y) * step(pf.y, 1.0) * vert;
+        float torn = step(0.35, vnoise(vec2(pf.x * 9.0, pf.y * 7.0) + cid));
+        if (inP * torn > 0.5) {
+          int ci = int(floor(fract(hp * 7.3) * 6.0));
+          vec3 pc = vec3(0.75, 0.2, 0.15);
+          if (ci == 1) pc = vec3(0.85, 0.7, 0.2); else if (ci == 2) pc = vec3(0.15, 0.45, 0.7);
+          else if (ci == 3) pc = vec3(0.85, 0.82, 0.75); else if (ci == 4) pc = vec3(0.2, 0.55, 0.3); else if (ci == 5) pc = vec3(0.8, 0.4, 0.6);
+          // headline bar, rows of type, a face-sized blob
+          float rows = step(0.55, fract(pf.y * 9.0)) * step(0.2, pf.y) * step(pf.y, 0.62) * step(0.2, pf.x) * step(pf.x, 0.8);
+          float head = step(0.72, pf.y) * step(pf.y, 0.9) * step(0.18, pf.x) * step(pf.x, 0.82);
+          vec3 ink = mix(vec3(0.05), vec3(0.95, 0.9, 0.8), step(0.5, fract(hp * 3.1)));
+          pc = mix(pc, ink, max(rows * 0.8, head));
+          alb = pc * (0.55 + 0.4 * fbm(vW.yz * 3.0)) * 0.7;
+        }
+      }
       alb = mix(alb, vec3(0.12, 0.15, 0.10), smoothstep(1.2, 0.0, vW.y) * 0.8); // moss at the waterline
       vec3 stone = vec3(0.48, 0.40, 0.33) * (0.7 + 0.5 * fbm(vW.xz * 1.7));
       alb = mix(alb, stone, vStone);
@@ -281,7 +302,55 @@ export class Banks {
         if (weights(mid)[0] < 0.55) continue;
         const H = 5.2 + Math.floor(hash(n + side * 91) * 5);
         facade(add, lights, n * 3 + side, mid, L - 0.02, side, 0, 0, H, { ground: 'flood', balcony: 0.45, tank: 0.7, detail: 1 });
+        // a shop sign sticking out from the wall, lit
+        if (hash(n * 4.1 + side) > 0.62) {
+          const c = [[1, 0.3, 0.3], [0.3, 1, 0.8], [1, 0.8, 0.3], [0.5, 0.6, 1]][Math.floor(hash(n * 2.2 + side) * 4)];
+          const sp = at(mid - 1.5, side, -0.45, 3.6);
+          props.add(G.box, M(sp, 0, 0.7, 0.9, 0.06), new THREE.Color(c[0], c[1], c[2]).multiplyScalar(0.6), 1.2);
+          props.add(G.box, M(sp, 0, 0.74, 0.12, 0.08), '#1a1a1a');
+          props.add(G.box, M(at(mid - 1.5, side, -0.12, 4.12), 0, 0.7, 0.04, 0.04), '#151515');
+          lights.push({ p: at(mid - 1.5, side, -0.6, 3.6), c: new THREE.Vector3(c[0], c[1], c[2]).multiplyScalar(0.9), size: 1.0, flicker: hash(n) > 0.85 ? 1 : 0 });
+        }
       }
+    }
+    // things strung across the lane: washing, bunting, blue tarps
+    for (let s = Math.ceil(s0 / 3) * 3; s < s1; s += 3) {
+      const w = weights(s);
+      if (w[0] < 0.6) continue;
+      const hw = halfWidth(s);
+      const h = hash(s * 1.37 + 5);
+      const yaw = -Math.atan(centre(s + 0.5) - centre(s - 0.5));
+      if (h < 0.22) {
+        // washing line with clothes pegged on it
+        const y = 3.6 + hash(s + 2) * 1.5;
+        props.add(G.box, M(new THREE.Vector3(centre(s), y, -s), yaw, hw * 2 + 0.4, 0.012, 0.012), '#111');
+        const k = 3 + Math.floor(hash(s + 3) * 4);
+        for (let i = 0; i < k; i++) {
+          const x = -hw + 0.3 + (i + hash(s + i)) * (hw * 2 - 0.6) / k;
+          const ch = 0.45 + hash(s + i * 3) * 0.5;
+          const sag = Math.cos((x / hw) * Math.PI / 2) * 0.25;
+          props.add(G.box, M(new THREE.Vector3(centre(s) + x, y - sag - ch / 2, -s), yaw + (hash(s + i * 7) - 0.5) * 0.3, 0.34, ch, 0.015), new THREE.Color(PALETTE[Math.floor(hash(s * 3 + i) * PALETTE.length)]).multiplyScalar(0.5));
+        }
+      } else if (h < 0.34) {
+        // festival bunting, small triangles in a sagging line
+        const y = 4.6 + hash(s + 4) * 1.2;
+        const cols = ['#c0392b', '#e1a730', '#2e86c1', '#27ae60', '#e8e0d0', '#8e44ad'];
+        for (let i = 0; i <= 10; i++) {
+          const t = i / 10, x = -hw + t * hw * 2;
+          const sag = Math.sin(t * Math.PI) * 0.35;
+          const p = new THREE.Vector3(centre(s) + x, y - sag - 0.12, -s);
+          const m = new THREE.Matrix4().compose(p, new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, Math.PI / 4)), new THREE.Vector3(0.17, 0.17, 0.01));
+          props.add(G.box, m, cols[i % cols.length]);
+        }
+        props.add(G.box, M(new THREE.Vector3(centre(s), y - 0.18, -s), yaw, hw * 2, 0.01, 0.01), '#222');
+      } else if (h < 0.4 && hash(s + 9) > 0.3) {
+        // a blue tarp sagging over the lane, rain drumming on it
+        const y = 4.9 + hash(s + 6) * 1.0;
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.12 * (hash(s + 7) - 0.5), yaw, 0.06 * (hash(s + 8) - 0.5)));
+        props.add(G.box, new THREE.Matrix4().compose(new THREE.Vector3(centre(s), y, -s), q, new THREE.Vector3(hw * 2 + 0.3, 0.03, 2.2)), hash(s + 10) > 0.3 ? '#2a5aa0' : '#a0522d');
+      }
+    }
+    for (const side of [-1, 1]) {
       // the canal: a row of houses behind the walkway
       const C = 7.4;
       for (let n = Math.floor(s0 / C); ; n++) {
