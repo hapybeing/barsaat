@@ -3,121 +3,319 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Barsaat · बरसात — a paper boat in the monsoon</title>
-  <meta name="description" content="Write a wish on a page from a school notebook, fold it into a paper boat, and steer it through a monsoon night: down a flooded lane, under bridges, through a lightning storm on the river, out to open water. Light the floating lamps on the way. A real-time WebGL piece with live-synthesised sound." />
-  <meta name="theme-color" content="#0d0e16" />
-  <meta name="color-scheme" content="dark" />
-  <link rel="canonical" href="https://hapybeing.github.io/barsaat/" />
+  <title>Barsaat · मेघदूत — The Cloud Messenger</title>
+  <meta name="description" content="You are the first cloud of the monsoon. An exile has given you a message. Carry it north through a living monsoon miniature, after Kalidasa's Meghaduta." />
+  <meta name="theme-color" content="#1b1a18" />
+  <meta property="og:title" content="Barsaat · मेघदूत — The Cloud Messenger" />
+  <meta property="og:description" content="Even happy hearts thrill strangely to the cloud. A monsoon journey after Kalidasa's Meghaduta." />
+  <meta property="og:image" content="https://hapybeing.github.io/barsaat/og.jpg" />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary_large_image" />
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-  <link rel="icon" href="./favicon-32.png" sizes="32x32" type="image/png" />
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   <link rel="manifest" href="./site.webmanifest" />
-
-  <meta property="og:type" content="website" />
-  <meta property="og:site_name" content="Barsaat" />
-  <meta property="og:title" content="Barsaat · बरसात — a paper boat in the monsoon" />
-  <meta property="og:description" content="Fold your wish into a paper boat and steer it through a monsoon night. Light the lamps on the way." />
-  <meta property="og:url" content="https://hapybeing.github.io/barsaat/" />
-  <meta property="og:image" content="https://hapybeing.github.io/barsaat/og.jpg" />
-  <meta property="og:image:width" content="1200" />
-  <meta property="og:image:height" content="630" />
-  <meta property="og:image:alt" content="A paper boat on dark rain-rippled water at night, followed by a line of small floating oil lamps, under a stormy sky." />
-  <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Barsaat · बरसात" />
-  <meta name="twitter:description" content="Fold your wish into a paper boat and steer it through a monsoon night." />
-  <meta name="twitter:image" content="https://hapybeing.github.io/barsaat/og.jpg" />
-  <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"CreativeWork","name":"Barsaat","alternateName":"बरसात","description":"An interactive monsoon journey: a paper boat folded from your own writing, steered through a procedural city and river at night, in real-time WebGL with synthesised sound.","author":{"@type":"Person","name":"hapybeing","url":"https://github.com/hapybeing"},"inLanguage":["en","hi"],"url":"https://hapybeing.github.io/barsaat/","image":"https://hapybeing.github.io/barsaat/og.jpg"}
-  </script>
-  <style>
-    html,body{margin:0;height:100%;background:#0d0e16;color:#ece4d2}
-    #world{position:fixed;inset:0;width:100%;height:100%}
-  </style>
+  <link rel="preload" as="image" href="./plates/p1-ramagiri.webp" crossorigin="anonymous" />
 </head>
-<body>
-  <main>
-    <canvas id="world" tabindex="0" role="img" aria-label="A monsoon night. A paper boat on rain-rippled water, between houses, under bridges, past temples and floating lamps. Touch and hold to steer; arrow keys also steer and space blows the boat along."></canvas>
+<body class="is-loading">
+  <a class="skip" href="#prologue">Skip to the story</a>
 
-    <div class="vignette" aria-hidden="true"></div>
-
-    <section id="gate" class="gate" aria-labelledby="title">
-      <p class="gate__hi" lang="hi">बरसात</p>
-      <h1 id="title" class="gate__title">Barsaat</h1>
-      <p class="gate__lede">Write a wish. Fold it into a paper boat.<br />Let the monsoon carry it to the sea.</p>
-      <div class="gate__actions">
-        <button id="enter-sound" class="btn btn--primary" type="button">Begin with sound</button>
-        <button id="enter-quiet" class="btn" type="button">Begin quietly</button>
+  <div class="threshold" id="threshold" role="dialog" aria-modal="true" aria-labelledby="th-title">
+    <div class="th-inner">
+      <svg class="th-drop" viewBox="0 0 200 200" aria-hidden="true">
+        <path class="th-bead" d="M100 20 C 108 38 114 48 114 58 A 14 14 0 1 1 86 58 C 86 48 92 38 100 20 Z"/>
+      </svg>
+      <h1 id="th-title" class="th-title"><span class="dev" lang="hi">बरसात</span><span class="th-sub">Barsaat · The Cloud Messenger</span></h1>
+      <div class="gauge" aria-hidden="true"><div class="gauge-fill"></div></div>
+      <p class="th-mm" aria-live="polite"><span id="mm">0</span> mm <span class="th-note">— a hundred in an hour is a cloudburst</span></p>
+      <div class="th-enter" hidden>
+        <button class="btn btn-gold" id="enter-sound" type="button">Enter with sound</button>
+        <button class="btn btn-ghost" id="enter-quiet" type="button">Enter in silence</button>
+        <p class="th-hint">Best with headphones. Scroll to fly north.</p>
       </div>
-      <p class="gate__note">About four minutes. Headphones help. Lightning flashes can be softened.</p>
-      <div class="gate__fallback">
-        <p>Your browser can't draw this piece (it needs WebGL). It's a paper boat folded from your own writing, steered down a flooded lane, under bridges, through a storm on the river and out to open water, lighting floating lamps on the way.</p>
+    </div>
+  </div>
+
+  <div class="arrival" id="arrival" hidden>
+    <p class="arr-k">A cloud has brought you a message.</p>
+    <p class="arr-h">It came the long way, the way the rains come.</p>
+  </div>
+
+  <canvas id="gl" aria-hidden="true"></canvas>
+  <svg id="map" class="map" aria-hidden="true"></svg>
+
+  <nav class="ladder" aria-label="Chapters, named for the rain">
+    <ol>
+      <li><a href="#boonda-baandi" data-ch="1"><span class="dev" lang="hi">बूँदाबाँदी</span><span class="lt">first drops</span></a></li>
+      <li><a href="#phuhaar" data-ch="2"><span class="dev" lang="hi">फुहार</span><span class="lt">spray</span></a></li>
+      <li><a href="#rimjhim" data-ch="3"><span class="dev" lang="hi">रिमझिम</span><span class="lt">steady rain</span></a></li>
+      <li><a href="#bauchhaar" data-ch="4"><span class="dev" lang="hi">बौछार</span><span class="lt">slanting rain</span></a></li>
+      <li><a href="#jhadi" data-ch="5"><span class="dev" lang="hi">झड़ी</span><span class="lt">unending rain</span></a></li>
+      <li><a href="#mooslaadhaar" data-ch="6"><span class="dev" lang="hi">मूसलाधार</span><span class="lt">downpour</span></a></li>
+      <li><a href="#khul-gaya" data-ch="7"><span class="dev" lang="hi">खुल गया</span><span class="lt">it has cleared</span></a></li>
+    </ol>
+  </nav>
+  <div class="chrome">
+    <button class="chip" id="sound" type="button" aria-pressed="false"><span class="chip-dot"></span><span class="chip-t">Sound off</span></button>
+    <p class="load" aria-hidden="true"><span class="load-k">cloud</span><span class="load-bar"><span></span></span></p>
+  </div>
+  <p class="hold-hint" id="hold-hint" aria-hidden="true">Press and hold to thunder</p>
+
+  <main id="story">
+    <section class="sec sec-open" id="top" data-plate="0" data-full="1" data-rain="0" data-storm="0.2" data-dry="1" aria-label="Title">
+      <div class="open-inner">
+        <p class="kicker">After Kalidasa's <em>Meghaduta</em>, c. 5th century</p>
+        <h2 class="mega"><span class="dev" lang="hi">मेघदूत</span></h2>
+        <p class="mega-sub">The Cloud Messenger</p>
+        <p class="tag">“Even happy hearts thrill strangely to the cloud.”</p>
+        <p class="scroll-cue" aria-hidden="true"><span></span>scroll</p>
       </div>
     </section>
 
-    <section id="paper" class="paper" aria-hidden="true" aria-labelledby="paper-title">
-      <div class="paper__head">
-        <p class="paper__hi" lang="hi">कुछ लिखो, बारिश ले जाएगी</p>
-        <h2 id="paper-title" class="paper__title">Write something. The rain will take it.</h2>
-      </div>
-      <div class="paper__sheet"><canvas id="page" aria-label="A notebook page. Draw or write on it with your finger."></canvas></div>
-      <div class="paper__actions">
-        <button id="btn-clear" class="btn btn--ghost" type="button">Clear</button>
-        <button id="btn-fold" class="btn btn--primary" type="button">Fold it into a boat</button>
-      </div>
-    </section>
+    <section class="sec sec-read" id="prologue" data-plate="0" data-full="0" data-rain="0" data-storm="0.25" data-dry="1">
+      <div class="col">
+        <p class="eyebrow">Prologue · रामगिरि · Rama's peak</p>
+        <blockquote class="verse">
+          <p>On Rama's shady peak where hermits roam,<br/>Mid streams by Sita's bathing sanctified,<br/>An erring Yaksha made his hapless home,<br/>Doomed by his master humbly to abide,<br/>And spend a long, long year of absence from his bride.</p>
+          <cite>Former Cloud, I</cite>
+        </blockquote>
+        <p class="prose">An attendant of the god of wealth is exiled for a year, to a hill in the middle of India. His young wife is half a subcontinent away, in a city on the slopes of Kailasa. Eight months pass. Then, at the edge of summer, a dark shape comes over the ridge.</p>
+        <blockquote class="verse">
+          <p>Some months were gone; the lonely lover's pain<br/>Had loosed his golden bracelet day by day<br/>Ere he beheld the harbinger of rain,<br/>A cloud that charged the peak in mimic fray,<br/>As an elephant attacks a bank of earth in play.</p>
+          <cite>Former Cloud, II</cite>
+        </blockquote>
+        <p class="prose">He offers it fresh blossoms, and asks it to carry a message north. <strong>You are that cloud.</strong></p>
 
-    <div id="hud" class="hud" aria-hidden="true"><span class="hud__icon"></span><span id="count" lang="hi">०</span></div>
-    <div id="caption" class="caption" aria-hidden="true"><p class="hi" lang="hi"></p><p class="en"></p></div>
-    <p id="hint" class="hint" aria-hidden="true"></p>
-
-    <section id="end" class="end" aria-hidden="true" aria-labelledby="end-title">
-      <p class="end__hi" lang="hi">फिर बरसेगा</p>
-      <h2 id="end-title" class="end__title">It will rain again.</h2>
-      <p id="end-lit" class="end__lit"></p>
-      <div class="end__actions">
-        <button id="btn-drift" class="btn btn--primary" type="button">Keep drifting</button>
-        <button id="btn-again" class="btn" type="button">Fold another</button>
-        <button id="btn-card" class="btn btn--ghost" type="button">Save a postcard</button>
+        <form class="letter" id="letter" autocomplete="off">
+          <label for="msg" class="letter-k">Before you leave, take a message of your own to someone far away.</label>
+          <textarea id="msg" maxlength="140" rows="3" spellcheck="false" placeholder="I am well. The rains have come. I think of you."></textarea>
+          <div class="letter-f">
+            <span class="letter-n"><span id="msg-n">0</span>/140 · it never leaves this device</span>
+            <button class="btn btn-gold" type="submit">Carry it north</button>
+          </div>
+        </form>
       </div>
     </section>
 
-    <div id="live" class="sr-only" aria-live="polite"></div>
-    <p id="debug" class="debug" hidden></p>
+    <section class="sec sec-open" id="boonda-baandi" data-plate="0" data-full="1" data-rain="0.12" data-storm="0.35" data-dry="0.7" data-ch="1">
+      <div class="open-inner">
+        <p class="num">I</p>
+        <h2 class="word"><span class="dev" lang="hi">बूँदाबाँदी</span></h2>
+        <p class="gloss"><em>boonda-baandi</em> · the first scattered drops</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="0" data-full="0" data-rain="0.18" data-storm="0.4" data-dry="0.35" data-ch="1">
+      <div class="col">
+        <blockquote class="verse">
+          <p>Nor did it pass the lovelorn Yaksha's mind<br/>How all unfitly might his message mate<br/>With a cloud, mere fire and water, smoke and wind—<br/>Ne'er yet was lover could discriminate<br/>'Twixt life and lifeless things, in his love-blinded state.</p>
+          <cite>Former Cloud, V</cite>
+        </blockquote>
+        <aside class="note">
+          <h3>The smell of the first rain</h3>
+          <p>The first drops on hot dust release a smell scientists named <em>petrichor</em> in 1964. In Kannauj, perfumers had already been bottling it for generations as <em>mitti attar</em>, “earth's perfume”: baked clay distilled for days into sandalwood oil. Kalidasa had a line for it too: <em>“Scenting the sweet, sweet smell of forest earth.”</em></p>
+        </aside>
+      </div>
+    </section>
 
-    <nav id="controls" class="controls" aria-label="Settings" hidden>
-      <button id="btn-sound" class="ctl" type="button" aria-pressed="false">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-        <span class="label">Sound off</span>
-      </button>
-      <button id="btn-flash" class="ctl" type="button" aria-pressed="true">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M13 2 5 14h6l-1 8 8-12h-6z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
-        <span class="label">Lightning flashes on</span>
-      </button>
-      <button id="btn-info" class="ctl" type="button" aria-haspopup="dialog">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 11v6M12 7.5v.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-        <span class="label">About</span>
-      </button>
-    </nav>
+    <section class="sec sec-open" id="phuhaar" data-plate="0" data-full="1" data-rain="0.25" data-storm="0.45" data-dry="0.2" data-ch="2">
+      <div class="open-inner">
+        <p class="num">II</p>
+        <h2 class="word"><span class="dev" lang="hi">फुहार</span></h2>
+        <p class="gloss"><em>phuhaar</em> · a fine spray you walk through</p>
+      </div>
+    </section>
+    <section class="sec sec-read sec-map" data-plate="map" data-full="0" data-rain="0.2" data-storm="0.3" data-ch="2">
+      <div class="col">
+        <blockquote class="verse">
+          <p>Learn first, O cloud, the road that thou must go,<br/>Then hear my message ere thou speed away;<br/>Before thee mountains rise and rivers flow:<br/>When thou art weary, on the mountains stay,<br/>And when exhausted, drink the rivers' driven spray.</p>
+          <cite>Former Cloud, XIII</cite>
+        </blockquote>
+        <p class="prose">The route the exile gives is real: north-west to the Narmada, to Ujjain, then north across the plains to the Ganga and the Himalaya. It is also, near enough, the path the monsoon takes every year. The rains reach Kerala around the first of June and cover the whole country by the eighth of July.</p>
+        <blockquote class="verse">
+          <p>While favouring breezes waft thee gently forth,<br/>And while upon thy left the plover sings<br/>His proud, sweet song, the cranes who know thy worth<br/>Will meet thee in the sky on joyful wings.</p>
+          <cite>Former Cloud, IX</cite>
+        </blockquote>
+        <p class="fine">Map: the poem's route in gold. Dashed lines: approximate normal monsoon onset dates, after the India Meteorological Department (2020 normals).</p>
+      </div>
+    </section>
 
-    <dialog id="about" class="about" aria-labelledby="about-title">
-      <form method="dialog">
-        <p class="about__hi" lang="hi">बरसात</p>
-        <h2 id="about-title">Barsaat</h2>
-        <p>Every monsoon, children tear a page out of a school notebook, fold it into a boat and set it in the water running down the lane. This is that boat's whole night: the lane, the canal, the river in a storm, and the open water after.</p>
-        <h3>How to play</h3>
-        <ul>
-          <li><strong>Touch and hold</strong> to steer toward your finger. Keep holding to blow the boat along.</li>
-          <li><strong>Steer through the dark lamps</strong> to light them. They follow you, and each one plays a note of Raag Megh, the raag of rain clouds.</li>
-          <li>Keyboard: <kbd>←</kbd> <kbd>→</kbd> steer, <kbd>space</kbd> blows.</li>
-        </ul>
-        <h3>How it's made</h3>
-        <p>Nothing here is a photo or a recording. The city, the river and the sky are generated as you go, in real-time WebGL with hand-written GLSL shaders: every raindrop leaves a ring on the water, every lamp breaks into a long streak in it, and the walls reflect with their lit windows. The boat is folded from the very page you wrote on. All the sound, from the rain on tin roofs to the tanpura, the thunder and the temple bells, is synthesised live with Web Audio.</p>
-        <p class="about__credit">Made by <a href="https://github.com/hapybeing" rel="noopener">hapybeing</a>, on an Android tablet. <a href="https://github.com/hapybeing/barsaat" rel="noopener">Source on GitHub</a>.</p>
-        <button class="btn" value="close">Back to the water</button>
-      </form>
-    </dialog>
+    <section class="sec sec-open" id="rimjhim" data-plate="1" data-full="1" data-rain="0.4" data-storm="0.4" data-ch="3">
+      <div class="open-inner">
+        <p class="num">III</p>
+        <h2 class="word"><span class="dev" lang="hi">रिमझिम</span></h2>
+        <p class="gloss"><em>rimjhim</em> · steady rain with a rhythm in it</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="1" data-full="0" data-rain="0.45" data-storm="0.4" data-ch="3">
+      <div class="col">
+        <blockquote class="verse">
+          <p>Then fly, rain-quickened, to the Reva river<br/>Which gaily breaks on Vindhya's rocky side,<br/>Like painted streaks upon an elephant's dingy hide.</p>
+          <cite>Former Cloud, XIX</cite>
+        </blockquote>
+        <blockquote class="verse">
+          <p>Spying the madder on the banks, half brown,<br/>Half green with shoots that struggle to the birth,<br/>Nibbling where early plantain-buds hang down,<br/>Scenting the sweet, sweet smell of forest earth,<br/>The deer will trace thy misty track that ends the dearth.</p>
+          <cite>Former Cloud, XXI</cite>
+        </blockquote>
+        <aside class="note">
+          <h3>Paper boats</h3>
+          <p>Every monsoon childhood has the same engineering project: a page torn from a notebook, folded into a <em>kaagaz ki kashti</em>, and launched into the gutter the moment the lane floods. Most sink by the second corner. That is not the point.</p>
+        </aside>
+        <blockquote class="verse">
+          <p>Yet I foresee delay on every hill<br/>Where jasmines blow, and where the peacock-train<br/>Cries forth with joyful tears a welcome shrill.</p>
+          <cite>Former Cloud, XXII</cite>
+        </blockquote>
+      </div>
+    </section>
+
+    <section class="sec sec-open" id="bauchhaar" data-plate="2" data-full="1" data-rain="0.55" data-slant="0.55" data-storm="0.55" data-dusk="1" data-ch="4">
+      <div class="open-inner">
+        <p class="num">IV</p>
+        <h2 class="word"><span class="dev" lang="hi">बौछार</span></h2>
+        <p class="gloss"><em>bauchhaar</em> · rain the wind throws sideways</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="2" data-full="0" data-rain="0.6" data-slant="0.6" data-storm="0.6" data-dusk="1" data-ch="4">
+      <div class="col">
+        <p class="eyebrow">Ujjain, at dusk</p>
+        <blockquote class="verse">
+          <p>Clothing thyself in twilight's rose-red glory,<br/>Embrace the dancing Shiva's tree-like arm;<br/>He will prefer thee to his mantle gory.</p>
+          <cite>Former Cloud, XXXVI</cite>
+        </blockquote>
+        <blockquote class="verse">
+          <p>Where women steal to rendezvous by night<br/>Through darkness that a needle might divide,<br/>Show them the road with lightning-flashes bright<br/>As golden streaks upon the touchstone's side—<br/>But rain and thunder not, lest they be terrified.</p>
+          <cite>Former Cloud, XXXVII</cite>
+        </blockquote>
+        <aside class="note">
+          <h3>The raga that brings rain</h3>
+          <p>The story goes that Tansen, a singer at Akbar's court, sang Raag Deepak until every lamp lit itself and his own body burned, and that he was cooled when Raag Megh Malhar was sung and the rain came. It is a legend. Musicians still sing Malhar every monsoon, just in case. The music you may be hearing is built live from its notes.</p>
+        </aside>
+        <p class="try"><span>Press and hold anywhere</span> to thunder.</p>
+      </div>
+    </section>
+
+    <section class="sec sec-gallery" id="gallery" data-plate="none" data-full="0" data-rain="0.3" data-storm="0.3" aria-labelledby="g-title">
+      <div class="g-head">
+        <p class="eyebrow">Interlude</p>
+        <h2 id="g-title" class="g-title">The rain in paint</h2>
+        <p class="prose">For three hundred years, Indian painters gave the monsoon its own vocabulary: skies of ink instead of blue, lightning drawn as a gold snake, a row of white cranes across the dark, peacocks crying on the rooftops. These are the real thing.</p>
+      </div>
+      <div class="g-track" tabindex="0" aria-label="Paintings, scroll sideways">
+        <figure class="g-item"><img loading="lazy" decoding="async" src="./gallery/cma-bhadon-barahmasa-kangra.webp" width="657" height="900" alt="Royal lovers on a white terrace watch dark rain clouds, lit by gold lightning, with a row of white cranes." /><figcaption><b>Royal lovers watching rain clouds: the month of Bhadon</b> Pahari, Kangra school, c. 1790. The Cleveland Museum of Art, CC0.</figcaption></figure>
+        <figure class="g-item"><img loading="lazy" decoding="async" src="./gallery/met-setmalar-ragini-malwa.webp" width="469" height="624" alt="A Malwa ragamala page: bands of heavy cloud and snaking lightning above a pavilion." /><figcaption><b>Setmalar Ragini</b> Malwa, c. 1630–40. The Metropolitan Museum of Art, public domain.</figcaption></figure>
+        <figure class="g-item"><img loading="lazy" decoding="async" src="./gallery/met-krishna-gopis-shelter-rain-jaipur.webp" width="461" height="625" alt="Krishna and the cowherd women shelter together under a blanket from the rain." /><figcaption><b>Krishna and the Gopis take shelter from the rain</b> Jaipur, 1760. The Metropolitan Museum of Art, public domain.</figcaption></figure>
+        <figure class="g-item"><img loading="lazy" decoding="async" src="./gallery/met-madhumadhavi-ragini-marwar.webp" width="492" height="625" alt="A woman hurries toward a pavilion under a dark sky with lightning and birds." /><figcaption><b>Madhumadhavi Ragini</b> Marwar, c. 1640–50. The Metropolitan Museum of Art, public domain.</figcaption></figure>
+        <figure class="g-item"><img loading="lazy" decoding="async" src="./gallery/cma-teej-swinging-marwar.webp" width="584" height="900" alt="Women on swings at the Teej festival of the rains, watched by a maharaja." /><figcaption><b>Watching girls swinging at the Teej festival</b> Marwar. The Cleveland Museum of Art, CC0.</figcaption></figure>
+      </div>
+    </section>
+
+    <section class="sec sec-open" id="jhadi" data-plate="3" data-full="1" data-rain="0.7" data-storm="0.65" data-ch="5">
+      <div class="open-inner">
+        <p class="num">V</p>
+        <h2 class="word"><span class="dev" lang="hi">झड़ी</span></h2>
+        <p class="gloss"><em>jhadi</em> · rain that will not stop</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="3" data-full="0" data-rain="0.72" data-storm="0.65" data-ch="5">
+      <div class="col">
+        <blockquote class="verse">
+          <p>Fly then where Ganges o'er the king of mountains<br/>Falls like a flight of stairs from heaven let down<br/>For the sons of men; she hurls her billowy fountains<br/>Like hands to grasp the moon on Shiva's crown<br/>And laughs her foamy laugh at Gauri's jealous frown.</p>
+          <cite>Former Cloud, L</cite>
+        </blockquote>
+        <blockquote class="verse">
+          <p>If thou, like some great elephant of the sky,<br/>Shouldst wish from heaven's eminence to bend<br/>And taste the crystal stream, her beauties high—<br/>As thy dark shadows with her whiteness blend—<br/>Would be what Jumna's waters at Prayaga lend.</p>
+          <cite>Former Cloud, LI</cite>
+        </blockquote>
+        <aside class="note">
+          <h3><span class="dev" lang="hi">सावन की झड़ी</span></h3>
+          <p><em>Saawan ki jhadi</em> is the rain of the monsoon month that goes on for days. It is also what you call tears that will not stop. The language has always known the two are related.</p>
+        </aside>
+      </div>
+    </section>
+
+    <section class="sec sec-open" id="mooslaadhaar" data-plate="4" data-full="1" data-rain="0.9" data-slant="0.3" data-storm="1" data-ch="6">
+      <div class="open-inner">
+        <p class="num">VI</p>
+        <h2 class="word"><span class="dev" lang="hi">मूसलाधार</span></h2>
+        <p class="gloss"><em>mooslaadhaar</em> · rain in streams as thick as a pestle</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="4" data-full="0" data-rain="1" data-slant="0.35" data-storm="1" data-ch="6">
+      <div class="col">
+        <blockquote class="verse">
+          <p>If, born from friction of the deodars,<br/>A scudding fire should prove the mountain's bane,<br/>Singeing the tails of yaks with fiery stars,<br/>Quench thou the flame with countless streams of rain—<br/>The great have power that they may soothe distress and pain.</p>
+          <cite>Former Cloud, LIII</cite>
+        </blockquote>
+        <blockquote class="verse">
+          <p>The breeze is piping on the bamboo-tree;<br/>And choirs of heaven sing in union sweet<br/>O'er demon foe of Shiva's victory;<br/>If thunders in the caverns drumlike beat,<br/>Then surely Shiva's symphony will be complete.</p>
+          <cite>Former Cloud, LVI</cite>
+        </blockquote>
+        <aside class="note">
+          <h3><span class="dev" lang="hi">बादल फटना</span> · the cloud tears</h3>
+          <p>A cloudburst is a hundred millimetres of rain in an hour: a hundred litres poured on every square metre of ground. In the mountains it comes without warning, and the rivers rise in minutes.</p>
+        </aside>
+      </div>
+    </section>
+    <section class="sec sec-burst" data-plate="4" data-full="1" data-rain="1" data-storm="1" data-burst="1" data-ch="6" aria-label="Cloudburst">
+      <p class="burst-t"><span class="dev" lang="hi">बादल फटना</span></p>
+    </section>
+
+    <section class="sec sec-open" id="khul-gaya" data-plate="5" data-full="1" data-rain="0.05" data-storm="0" data-clear="1" data-ch="7">
+      <div class="open-inner">
+        <p class="num">VII</p>
+        <h2 class="word"><span class="dev" lang="hi">खुल गया</span></h2>
+        <p class="gloss"><em>khul gaya</em> · it has cleared</p>
+      </div>
+    </section>
+    <section class="sec sec-read" data-plate="5" data-full="0" data-rain="0" data-storm="0" data-clear="1" data-ch="7">
+      <div class="col">
+        <blockquote class="verse">
+          <p>Then, in familiar Alaka find rest,<br/>Down whom the Ganges' silken river swirls,<br/>Whose towers cling to her mountain lover's breast,<br/>While clouds adorn her face like glossy curls<br/>And streams of rain like strings of close-inwoven pearls.</p>
+          <cite>Former Cloud, LXIII</cite>
+        </blockquote>
+        <p class="prose">She is at the window, counting the days left with flowers laid on the sill. The cloud settles against the glass and does what it came to do.</p>
+      </div>
+    </section>
+    <section class="sec sec-msg" data-plate="5" data-full="1" data-rain="0" data-storm="0" data-clear="1" data-msg="1" data-ch="7" aria-label="The message">
+      <p class="sr" id="msg-sr"></p>
+    </section>
+    <section class="sec sec-read" data-plate="5" data-full="0" data-rain="0" data-storm="0" data-clear="1" data-ch="7">
+      <div class="col">
+        <p class="prose">So she will know the cloud is a true messenger, he gives it a secret only the two of them could know:</p>
+        <blockquote class="verse">
+          <p>And one thing more: thou layest once asleep,<br/>Clasping my neck, then wakening with a scream;<br/>And when I wondered why, thou couldst but weep<br/>A while, and then a smile began to beam:<br/>“Rogue! Rogue! I saw thee with another girl in dream.”</p>
+          <cite>Latter Cloud, XLVIII</cite>
+        </blockquote>
+        <blockquote class="verse">
+          <p>When Vishnu rises from his serpent bed<br/>The curse is ended; close thine eyelids tight<br/>And wait till only four months more are sped;<br/>Then we shall taste each long-desired delight<br/>Through nights that the full autumn moon illumines bright.</p>
+          <cite>Latter Cloud, XLVII</cite>
+        </blockquote>
+        <blockquote class="verse verse-last">
+          <p>…then wander free<br/>In rainy loveliness, and ne'er abide<br/>One moment's separation from thy lightning bride.</p>
+          <cite>Latter Cloud, LII</cite>
+        </blockquote>
+      </div>
+    </section>
+
+    <section class="sec sec-coda" id="coda" data-plate="5" data-full="1" data-rain="0" data-storm="0" data-clear="1" data-end="1" aria-labelledby="coda-t">
+      <div class="coda-inner">
+        <h2 id="coda-t" class="coda-t">Send this cloud</h2>
+        <p class="prose">Somebody is far away from somebody, every monsoon. Send them a cloud. Your message travels inside the link and nowhere else.</p>
+        <div class="coda-actions">
+          <button class="btn btn-gold" id="share" type="button">Send this cloud</button>
+          <a class="btn btn-ghost" href="#top" id="again">Fly again</a>
+          <a class="btn btn-ghost" href="https://www.gutenberg.org/ebooks/16659" target="_blank" rel="noopener">Read the whole poem</a>
+        </div>
+        <p class="share-out" id="share-out" aria-live="polite"></p>
+        <footer class="colophon">
+          <p><b>Words</b> Kalidasa, <em>Meghaduta</em> (c. 5th century), translated by Arthur W. Ryder (1912), public domain via Project Gutenberg.</p>
+          <p><b>Chapter paintings</b> made for this site with image generation, after the Pahari masters of Kangra. <b>The rain in paint</b> The Metropolitan Museum of Art (Open Access) and The Cleveland Museum of Art (CC0).</p>
+          <p><b>Onset lines</b> approximate, after India Meteorological Department normals. <b>Sound</b> synthesised live in your browser from Raag Megh and Miyan ki Malhar.</p>
+          <p class="made">Made by <b>hapybeing</b></p>
+        </footer>
+      </div>
+    </section>
   </main>
-  <noscript><style>.gate__actions,.gate__note{display:none}.gate__fallback{display:block!important}</style></noscript>
+
+  <noscript><p class="noscript">This story needs JavaScript for its paintings to move. The words are all here.</p></noscript>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

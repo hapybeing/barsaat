@@ -1,606 +1,355 @@
-import * as THREE from 'three';
-import '@fontsource/tiro-devanagari-hindi/400.css';
-import '@fontsource/cormorant-garamond/400.css';
-import '@fontsource/cormorant-garamond/400-italic.css';
+import './fonts';
 import './style.css';
-import { shared, MAX_LIGHTS } from './world/common';
-import { makeSky } from './world/sky';
-import { makeWater } from './world/water';
-import { makeRain } from './world/rain';
-import { Banks, wallHeights, type Light } from './world/banks';
-import { makeBoat, SHEET_H } from './world/boat';
-import { Glows } from './world/glows';
-import { Diyas } from './world/diyas';
-import { Lightning } from './world/lightning';
-import { makeSkyline } from './world/skyline';
-import { centre, halfWidth, slope, weights, rainAt, clearAt, fogAt, speedAt, rigAt, chapterAt, STARTS, END } from './world/path';
-import { Page } from './page';
-import { Sound } from './audio';
+import Lenis from 'lenis';
+import { Folio, PLATES, SKY } from './gl/folio';
+import { Score } from './audio';
+import { RouteMap } from './map';
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const params = new URLSearchParams(location.search);
-const DEBUG = params.has('debug');
-const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// One clock, one state. Scroll position → per-section targets → eased state → GL, DOM, sound.
 
-// ---------------------------------------------------------------- renderer
+const $ = <T extends Element = HTMLElement>(s: string) => document.querySelector(s) as T;
+const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const smooth = (a: number, b: number, x: number) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-const canvas = $<HTMLCanvasElement>('world');
-let renderer: THREE.WebGLRenderer;
-try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', alpha: false });
-} catch {
-  document.documentElement.classList.add('no-gl');
-  throw new Error('WebGL unavailable');
+const url = new URL(location.href);
+const DEBUG = url.searchParams.has('debug');
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const touch = matchMedia('(pointer: coarse)').matches;
+
+// ---------------------------------------------------------------- sections → targets
+type Target = { plate: number; map: number; full: number; show: number; rain: number; slant: number; storm: number; dusk: number; clear: number; dry: number; burst: number; msg: number; ch: number; end: number };
+const sections = [...document.querySelectorAll<HTMLElement>('.sec')];
+const targets: Target[] = [];
+{
+  let last = 0;
+  for (const s of sections) {
+    const d = s.dataset;
+    const p = d.plate === 'map' || d.plate === 'none' ? last : Number(d.plate ?? last);
+    last = p;
+    targets.push({
+      plate: p, map: d.plate === 'map' ? 1 : 0, show: d.plate === 'none' ? 0 : 1, full: Number(d.full ?? 0),
+      rain: Number(d.rain ?? 0), slant: Number(d.slant ?? 0.1), storm: Number(d.storm ?? 0), dusk: Number(d.dusk ?? 0),
+      clear: Number(d.clear ?? 0), dry: Number(d.dry ?? 0), burst: Number(d.burst ?? 0), msg: Number(d.msg ?? 0), ch: Number(d.ch ?? 0), end: Number(d.end ?? 0),
+    });
+  }
 }
-const maxDpr = Math.min(window.devicePixelRatio || 1, Number(params.get('dpr')) || 1.5);
-let dpr = Math.min(maxDpr, 1.25);
-renderer.setPixelRatio(dpr);
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.25;
+let tops: number[] = [], heights: number[] = [];
+const measure = () => { tops = sections.map(s => s.offsetTop); heights = sections.map(s => s.offsetHeight); };
 
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.05, 1200);
+const S = { full: 1, show: 1, rain: 0, slant: 0.1, storm: 0.2, dusk: 0, clear: 0, dry: 1, burst: 0, msg: 0, end: 0, map: 0, wet: 0, load: 0, wind: 0 };
+let plateA = 0, plateB = 0, mix = 0, chapter = 0, secIndex = 0, secT = 0;
 
-const sky = makeSky();
-const water = makeWater();
-const rain = makeRain(5000);
-const banks = new Banks();
-const staticGlows = new Glows(3200);
-const flameGlows = new Glows(320, true);
-const haloGlows = new Glows(340);
-const diyas = new Diyas(260);
-const lightning = new Lightning();
-const skyline = makeSkyline();
-scene.add(sky, skyline.mesh, water.mesh, banks.root, diyas.bowls, lightning.mesh, rain.mesh, staticGlows.mesh, haloGlows.mesh, flameGlows.mesh);
+// ---------------------------------------------------------------- GL
+const canvas = $<HTMLCanvasElement>('#gl');
+let folio: Folio | null = null;
+try { folio = new Folio(canvas); } catch (e) { console.warn('WebGL unavailable', e); document.body.classList.add('no-gl'); }
+const score = new Score();
+const map = new RouteMap($<SVGSVGElement>('#map'));
 
-const page = new Page($<HTMLCanvasElement>('page'));
-const paperTex = new THREE.CanvasTexture(page.canvas);
-paperTex.colorSpace = THREE.SRGBColorSpace;
-paperTex.anisotropy = 4;
-const boat = makeBoat(paperTex);
-const boatGroup = new THREE.Group();
-boatGroup.add(boat.mesh);
-boatGroup.visible = false;
-scene.add(boatGroup);
+// ---------------------------------------------------------------- layout
+const quality = { dpr: Number(url.searchParams.get('dpr')) || (touch ? 1.25 : 1.5), slow: 0 };
+const geo = { band: 22, folio: { x: 0, y: 0, w: 0, h: 0 }, opaqueTop: 0, portrait: false };
+function layout() {
+  const vw = innerWidth, vh = innerHeight;
+  const portrait = vh > vw * 1.05 || vw < 760;
+  geo.portrait = portrait;
+  const band = Math.round(clamp(Math.min(vw, vh) * 0.028, 13, 30));
+  geo.band = band;
+  const root = document.documentElement.style;
+  if (!portrait) {
+    const m = Math.max(26, vh * 0.06);
+    let h = vh - 2 * m - 2 * (band + 7);
+    let w = Math.min(h * 0.74, vw * 0.44);
+    h = Math.min(h, w / 0.62);
+    const x = vw - w - band - 7 - Math.max(vw * 0.05, 40);
+    const y = (vh - h) / 2;
+    geo.folio = { x, y, w, h };
+    geo.opaqueTop = 0;
+    const colx = Math.max(150 + vw * 0.02, vw * 0.14);
+    const colw = Math.min(560, x - band - 7 - colx - vw * 0.05);
+    root.setProperty('--colx', `${colx}px`);
+    root.setProperty('--colw', `${Math.max(280, colw)}px`);
+  } else {
+    const m = Math.round(clamp(vw * 0.05, 14, 34));
+    const x = m + band + 7, w = vw - 2 * x;
+    const y = 54 + band + 7;
+    const h = Math.min(vh * 0.48, w * 1.3);
+    geo.folio = { x, y, w, h };
+    geo.opaqueTop = y + h + band + 7 + 18;
+    root.setProperty('--frameTop', `${geo.opaqueTop}px`);
+  }
+  folio?.resize(vw, vh, Math.min(devicePixelRatio || 1, quality.dpr));
+  measure();
+}
 
-const sound = new Sound();
-
-// ---------------------------------------------------------------- state
-
-type Mode = 'gate' | 'page' | 'fold' | 'sail' | 'finale' | 'drift';
-let mode: Mode = 'gate';
-let modeT = 0;
-let time = 0;
-let s = 4;                 // distance travelled along the river
-let u = 0, uT = 0, uVel = 0;
-let speed = 1.2;
-let blow = 0;
-let soak = 0;
-let lit = 0;
-let flashOn = true;
-let nextStrike = 6;
-let driftT = 0;
-let lastChapter = -1;
-let templeRung = new Set<number>();
-let autopilot = params.has('auto');
-let hintDiyaShown = false;
-let firstStrike = -1;
-
-const boatPos = new THREE.Vector3();
-const camPos = new THREE.Vector3(0, 1, 0);
-const camLook = new THREE.Vector3(0, 0, -10);
-const tmp = new THREE.Vector3();
-const tmp2 = new THREE.Vector3();
-
-// the boat's wake path, for the procession of lamps
-const TRAIL_STEP = 0.12;
-const trail: THREE.Vector3[] = [];
-let trailAcc = 0;
-const trailAt = (dist: number) => {
-  const f = dist / TRAIL_STEP;
-  const i = Math.floor(f);
-  if (!trail.length) return boatPos.clone();
-  const a = trail[Math.min(i, trail.length - 1)], b = trail[Math.min(i + 1, trail.length - 1)];
-  return tmp2.copy(a).lerp(b, f - i).clone();
+// ---------------------------------------------------------------- scroll
+const lenis = !touch && !reduce ? new Lenis({ lerp: 0.085, wheelMultiplier: 0.9, anchors: true, autoRaf: false }) : null;
+let scrollY = 0, vel = 0;
+const readScroll = () => { const y = lenis ? lenis.scroll : window.scrollY; vel = lerp(vel, y - scrollY, 0.2); scrollY = y; };
+const goTo = (target: string | number, duration = 1.8) => {
+  if (lenis) lenis.scrollTo(target as any, { duration });
+  else if (typeof target === 'number') scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
+  else document.querySelector(target)?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth' });
 };
 
-diyas.onCatch = () => {
-  lit++;
-  sound.ignite();
-  $('count').textContent = toDeva(lit);
-  $('hud').classList.add('is-on');
-  $('hud').classList.remove('pulse'); void $('hud').offsetWidth; $('hud').classList.add('pulse');
-  if (lit === 1) hint('');
-};
-
-const toDeva = (n: number) => String(n).replace(/\d/g, d => '०१२३४५६७८९'[+d]);
-
-// ---------------------------------------------------------------- input
-
-const pointer = { down: false, x: 0.5, y: 0.5, heldFor: 0, id: -1 };
-const keys = { left: false, right: false, space: false };
-canvas.addEventListener('pointerdown', e => {
-  if (mode !== 'sail' && mode !== 'drift') return;
-  pointer.down = true; pointer.id = e.pointerId; pointer.heldFor = 0;
-  pointer.x = e.clientX / innerWidth; pointer.y = e.clientY / innerHeight;
-  canvas.setPointerCapture(e.pointerId);
-});
-canvas.addEventListener('pointermove', e => {
-  if (!pointer.down || e.pointerId !== pointer.id) return;
-  pointer.x = e.clientX / innerWidth; pointer.y = e.clientY / innerHeight;
-});
-for (const ev of ['pointerup', 'pointercancel'] as const) canvas.addEventListener(ev, e => { if (e.pointerId === pointer.id) pointer.down = false; });
-addEventListener('keydown', e => {
-  if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
-  if (e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
-  if (e.key === ' ') { keys.space = true; if (mode === 'sail' || mode === 'drift') e.preventDefault(); }
-});
-addEventListener('keyup', e => {
-  if (e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
-  if (e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
-  if (e.key === ' ') keys.space = false;
-});
-
-// ---------------------------------------------------------------- words
-
-const CAPTIONS = [
-  { hi: 'छतों का पानी, गली की नदी', en: 'Every roof empties into the lane.' },
-  { hi: 'पुलों के नीचे, बत्तियों के बीच', en: 'Under the bridges, between the lamps.' },
-  { hi: 'और आसमान फट पड़ा', en: 'Then the sky broke open.' },
-  { hi: 'फिर, ख़ामोशी', en: 'And then, quiet.' },
-];
-let captionTimer = 0;
-function caption(i: number) {
-  const el = $('caption');
-  el.querySelector('.hi')!.textContent = CAPTIONS[i].hi;
-  el.querySelector('.en')!.textContent = CAPTIONS[i].en;
-  el.classList.add('is-on');
-  $('live').textContent = CAPTIONS[i].en;
-  clearTimeout(captionTimer);
-  captionTimer = window.setTimeout(() => el.classList.remove('is-on'), 5200);
+// ---------------------------------------------------------------- message
+const msgEl = $<HTMLTextAreaElement>('#msg');
+const msgN = $('#msg-n');
+const letter = $<HTMLFormElement>('#letter');
+let message = '';
+const enc = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const dec = (s: string) => { try { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))); } catch { return ''; } };
+const arrived = location.hash.startsWith('#m=') ? dec(location.hash.slice(3)).replace(/[\u0000-\u001f]/g, ' ').slice(0, 140) : '';
+const fallbackMsg = 'I am well. The rains have come. I think of you.';
+function setMessage(m: string) {
+  message = (m.trim() || fallbackMsg).slice(0, 140);
+  document.fonts.load('400 60px Kalam').catch(() => null).then(() => folio?.writeMessage(message));
+  $('#msg-sr').textContent = `Written on the glass: ${message}`;
 }
-let hintTimer = 0;
-function hint(text: string, ms = 5000) {
-  const el = $('hint');
-  if (!text) { el.classList.remove('is-on'); return; }
-  el.textContent = text; el.classList.add('is-on');
-  clearTimeout(hintTimer);
-  hintTimer = window.setTimeout(() => el.classList.remove('is-on'), ms);
+msgEl.addEventListener('input', () => { msgN.textContent = String(msgEl.value.length); });
+letter.addEventListener('submit', e => {
+  e.preventDefault();
+  setMessage(msgEl.value);
+  letter.classList.add('sent');
+  letter.querySelector('button')!.textContent = 'Carrying it';
+  goTo('#boonda-baandi', 2.2);
+});
+if (arrived) {
+  msgEl.value = arrived; msgEl.readOnly = true; msgN.textContent = String(arrived.length);
+  $('.letter-k').textContent = 'This cloud is carrying a message for you. It will be delivered at the end of the road.';
+  letter.querySelector('button')!.textContent = 'Fly north';
 }
+setMessage(arrived);
 
-// ---------------------------------------------------------------- flow
+$('#share').addEventListener('click', async () => {
+  const link = `${location.origin}${location.pathname}#m=${enc(message)}`;
+  const out = $('#share-out');
+  try {
+    if (navigator.share) { await navigator.share({ title: 'A cloud has brought you a message', text: 'Even happy hearts thrill strangely to the cloud.', url: link }); out.textContent = 'The cloud is on its way.'; return; }
+  } catch { /* cancelled */ }
+  try { await navigator.clipboard.writeText(link); out.textContent = 'Link copied. Send it to someone far away.'; }
+  catch { out.textContent = link; }
+});
+$('#again').addEventListener('click', e => { e.preventDefault(); goTo(0, 3); });
 
+// ---------------------------------------------------------------- ladder
+const ladderLinks = [...document.querySelectorAll<HTMLAnchorElement>('.ladder a')];
+ladderLinks.forEach(a => a.addEventListener('click', e => {
+  e.preventDefault();
+  const id = a.getAttribute('href')!;
+  goTo(id);
+  history.replaceState(null, '', id);
+}));
+
+// ---------------------------------------------------------------- sound
+const chip = $<HTMLButtonElement>('#sound');
+async function setSound(v: boolean) {
+  try { if (v) await score.start(); } catch { v = false; }
+  score.setOn(v);
+  chip.setAttribute('aria-pressed', String(v));
+  chip.querySelector('.chip-t')!.textContent = v ? 'Sound on' : 'Sound off';
+}
+chip.addEventListener('click', () => setSound(!score.on));
+
+// ---------------------------------------------------------------- lightning
+let flash = 0, boltT = 0, boltA = 0, boltAge = 99, nextStrike = 6;
+function strike(near = false) {
+  if (!folio) return;
+  folio.bolt(SKY[plateA] ?? 0.4);
+  boltAge = 0; boltT = 0;
+  score.thunder(near ? 0.05 : 0.2 + Math.random() * 0.6);
+}
+let holding = false, holdT = 0, holdTimer = 0, downY = 0;
+const holdHint = $('#hold-hint');
+const interactive = (t: EventTarget | null) => t instanceof Element && !!t.closest('a,button,textarea,input,label,.verse,.prose,.note,.letter,.g-track,.chrome,.ladder');
+addEventListener('pointerdown', e => {
+  if (interactive(e.target) || e.button > 0 || !document.body.classList.contains('entered')) return;
+  downY = e.clientY;
+  holdTimer = window.setTimeout(() => { holding = true; holdT = 0; strike(true); score.swell(); }, 340);
+});
+const release = () => { clearTimeout(holdTimer); holding = false; };
+addEventListener('pointerup', release); addEventListener('pointercancel', release);
+addEventListener('pointermove', e => { if (!holding && Math.abs(e.clientY - downY) > 8) clearTimeout(holdTimer); });
+addEventListener('scroll', () => { if (!holding) clearTimeout(holdTimer); }, { passive: true });
+addEventListener('keydown', e => { if (e.key === 't' && !e.repeat && !(e.target instanceof HTMLTextAreaElement)) { holding = true; holdT = 0; strike(true); score.swell(); } });
+addEventListener('keyup', e => { if (e.key === 't') holding = false; });
+addEventListener('contextmenu', e => { if (!interactive(e.target)) e.preventDefault(); });
+
+const par = { x: 0, y: 0, tx: 0, ty: 0 };
+addEventListener('pointermove', e => { par.tx = (e.clientX / innerWidth - 0.5) * 2; par.ty = (e.clientY / innerHeight - 0.5) * 2; });
+
+// ---------------------------------------------------------------- threshold
+const threshold = $('#threshold');
+const gauge = $('.gauge-fill');
+const mm = $('#mm');
+let loaded = 0;
+const bump = () => { loaded++; const p = loaded / 4; gauge.style.width = `${p * 100}%`; mm.textContent = String(Math.round(p * 100)); };
+async function boot() {
+  const fonts = Promise.all([document.fonts.load('400 40px "Tiro Devanagari Hindi"', 'बरसात'), document.fonts.load('italic 300 20px Fraunces'), document.fonts.load('400 16px Mukta')]).catch(() => null).then(bump);
+  const border = (folio?.loadBorder() ?? Promise.resolve()).catch(() => null).then(bump);
+  const p0 = (folio?.loadPlate(0) ?? Promise.resolve()).catch(() => null).then(bump);
+  const p5 = (folio?.loadPlate(5) ?? Promise.resolve()).catch(() => null).then(bump);
+  await Promise.all([fonts, border, p0, p5]);
+  (async () => { for (const i of [1, 2, 3, 4]) await folio?.loadPlate(i).catch(() => null); })();
+  $('.th-enter').hidden = false;
+  ($('#enter-sound') as HTMLButtonElement).focus({ preventScroll: true });
+  if (DEBUG && url.searchParams.has('auto')) enter(false);
+}
 function enter(withSound: boolean) {
-  if (withSound) sound.start();
-  setSoundButton();
-  $('gate').classList.add('is-gone');
-  $('controls').hidden = false;
-  setTimeout(() => showPage(), 500);
+  threshold.classList.add('gone');
+  threshold.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('is-loading');
+  document.body.classList.add('entered');
+  measure();
+  if (withSound) setSound(true);
+  if (arrived) {
+    const a = $('#arrival'); a.hidden = false;
+    setTimeout(() => { a.style.transition = 'opacity 1.4s'; a.style.opacity = '0'; setTimeout(() => (a.hidden = true), 1500); }, 2600);
+  }
 }
-function showPage() {
-  mode = 'page'; modeT = 0;
-  $('paper').classList.add('is-on');
-  Promise.all([document.fonts.load('30px "Tiro Devanagari Hindi"', 'दिनांक बरसात'), document.fonts.load('italic 44px "Cormorant Garamond"')])
-    .then(() => { if (page.inked === 0) page.clear(); }).catch(() => {});
-  $('paper').setAttribute('aria-hidden', 'false');
-}
-function fold() {
-  if (mode !== 'page') return;
-  page.ensureWriting();
-  paperTex.needsUpdate = true;
-  const r = page.canvas.getBoundingClientRect();
-  placeSheet(r);
-  $('paper').classList.add('is-folding');
-  boatGroup.visible = true;
-  boat.uniforms.uFold.value = 0;
-  boat.uniforms.uUnlit.value = 1;
-  boatGroup.scale.setScalar(1);
-  mode = 'fold'; modeT = 0;
-  sound.crinkle(2.6);
-  const el = $('paper');
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    el.style.transition = 'none';
-    el.classList.remove('is-on', 'is-folding'); el.setAttribute('aria-hidden', 'true');
-    requestAnimationFrame(() => { el.style.transition = ''; });
-  }));
-}
+$('#enter-sound').addEventListener('click', () => enter(true));
+$('#enter-quiet').addEventListener('click', () => enter(false));
 
-const sheetPose = { pos: new THREE.Vector3(), quat: new THREE.Quaternion() };
-function placeSheet(r: DOMRect) {
-  // put the 3D sheet exactly where the paper was on screen, so the swap is invisible
-  const vh = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  const frac = r.height / innerHeight;
-  const D = SHEET_H / (frac * vh);
-  const cx = (r.left + r.width / 2) / innerWidth * 2 - 1;
-  const cy = -((r.top + r.height / 2) / innerHeight * 2 - 1);
-  camera.updateMatrixWorld();
-  tmp.set(cx * vh * camera.aspect / 2 * D, cy * vh / 2 * D, -D).applyMatrix4(camera.matrixWorld);
-  sheetPose.pos.copy(tmp);
-  sheetPose.quat.copy(camera.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), THREE.MathUtils.degToRad(1.2)));
-  boatGroup.position.copy(sheetPose.pos);
-  boatGroup.quaternion.copy(sheetPose.quat);
-}
-
-function startSail() {
-  mode = 'sail'; modeT = 0;
-  speed = speedAt(s);
-  diyas.startAt(s);
-  firstStrike = 1.6;
-  sound.splash();
-  hint(matchMedia('(pointer: coarse)').matches ? 'Touch and hold to steer. Holding longer blows it along.' : 'Hold the mouse to steer, or use the arrow keys. Space blows it along.', 6500);
-}
-
-function finale() {
-  mode = 'finale'; modeT = 0;
-  hint('');
-}
-
-function showEnd() {
-  const el = $('end');
-  $('end-lit').textContent = lit
-    ? `Your boat led ${lit} ${lit === 1 ? 'lamp' : 'lamps'} out to open water.`
-    : 'Your boat made it to open water on its own.';
-  el.classList.add('is-on');
-  el.setAttribute('aria-hidden', 'false');
-  $('live').textContent = $('end-lit').textContent || '';
-}
-
-function restart() {
-  $('end').classList.remove('is-on');
-  $('end').setAttribute('aria-hidden', 'true');
-  s = 4; u = 0; uT = 0; speed = 1.2; soak = 0; lit = 0; driftT = 0; lastChapter = -1;
-  templeRung = new Set(); hintDiyaShown = false;
-  trail.length = 0;
-  banks.reset(); banks.prime(s);
-  diyas.reset();
-  boatGroup.visible = false;
-  $('hud').classList.remove('is-on');
-  $('count').textContent = toDeva(0);
-  page.clear(); paperTex.needsUpdate = true;
-  showPage();
-}
-
-function drift() {
-  $('end').classList.remove('is-on');
-  $('end').setAttribute('aria-hidden', 'true');
-  mode = 'drift'; modeT = 0; driftT = 0;
-}
-
-function postcard() {
-  render();
-  const shot = renderer.domElement;
-  const W = 1600, H = Math.round(1600 * shot.height / shot.width);
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d')!;
-  g.drawImage(shot, 0, 0, W, H);
-  const grad = g.createLinearGradient(0, H * 0.6, 0, H);
-  grad.addColorStop(0, 'rgba(10,10,18,0)'); grad.addColorStop(1, 'rgba(10,10,18,0.75)');
-  g.fillStyle = grad; g.fillRect(0, 0, W, H);
-  g.fillStyle = '#ece4d2'; g.textAlign = 'left';
-  g.font = `${Math.round(W * 0.06)}px "Tiro Devanagari Hindi", serif`;
-  g.fillText('बरसात', W * 0.05, H - W * 0.075);
-  g.font = `italic ${Math.round(W * 0.022)}px "Cormorant Garamond", serif`;
-  g.fillText(lit ? `a paper boat and ${lit} ${lit === 1 ? 'lamp' : 'lamps'}` : 'a paper boat', W * 0.05, H - W * 0.035);
-  g.textAlign = 'right';
-  g.fillText('hapybeing.github.io/barsaat', W * 0.95, H - W * 0.035);
-  c.toBlob(b => {
-    if (!b) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = 'barsaat.png';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  }, 'image/png');
-}
-
-// ---------------------------------------------------------------- simulation
-
-const qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
-const boatQuatWater = new THREE.Quaternion();
-const yAxis = new THREE.Vector3(0, 1, 0), xAxis = new THREE.Vector3(1, 0, 0), zAxis = new THREE.Vector3(0, 0, 1);
-
-function waterPose(sv: number, uv: number, out: THREE.Vector3, q: THREE.Quaternion, roll: number, t: number) {
-  out.set(centre(sv) + uv, 0.005 + Math.sin(t * 2.1) * 0.008, -sv);
-  const heading = Math.atan(slope(sv) + uVel / Math.max(speed, 0.5) * 0.6);
-  q.setFromAxisAngle(yAxis, Math.PI / 2 - heading)
-    .multiply(qa.setFromAxisAngle(xAxis, roll + Math.sin(t * 1.7) * 0.05))
-    .multiply(qb.setFromAxisAngle(zAxis, Math.sin(t * 1.3 + 1) * 0.04));
+// ---------------------------------------------------------------- frame loop
+let last = performance.now(), time = 0, frames = 0, fpsT = 0, fps = 60, acc = 0;
+let craneT = -1, craneNext = 4;
+const burstSec = $('.sec-burst');
+const mapIndex = sections.findIndex(s => s.classList.contains('sec-map'));
+const loadBar = $('.load-bar span');
+function frame(now: number) {
+  requestAnimationFrame(frame);
+  const raw = (now - last) / 1000;
+  last = now;
+  acc += raw;
+  if (acc < 1 / 62) return; // hold ~60 fps on 120/144 Hz screens
+  const dt = Math.min(0.05, acc);
+  acc = 0;
+  time += dt;
+  if (lenis) lenis.raf(now);
+  readScroll();
+  step(dt);
+  frames++; fpsT += dt;
+  if (fpsT > 1) {
+    fps = frames / fpsT; frames = 0; fpsT = 0;
+    if (fps < 40 && quality.dpr > 0.75 && time > 4 && !url.searchParams.get('dpr')) { if (++quality.slow > 2) { quality.dpr = Math.max(0.75, quality.dpr - 0.25); quality.slow = 0; layout(); } } else quality.slow = 0;
+  }
+  if (DEBUG) debugLine();
 }
 
 function step(dt: number) {
-  time += dt; modeT += dt;
-  const w = weights(s);
-  const hw = halfWidth(s);
+  const vh = innerHeight;
+  const focus = scrollY + vh * 0.55;
+  let i = 0;
+  while (i < sections.length - 1 && tops[i + 1] <= focus) i++;
+  secIndex = i;
+  const t = clamp((focus - tops[i]) / Math.max(1, heights[i]));
+  secT = t;
+  const A = targets[i], B = targets[Math.min(sections.length - 1, i + 1)];
+  const k = smooth(0.72, 1.0, t);
+  const T = (key: keyof Target) => lerp(A[key], B[key], k);
+  const e = 1 - Math.exp(-dt * (reduce ? 20 : 4));
+  const ef = 1 - Math.exp(-dt * 12);
+  S.full = lerp(S.full, T('full'), ef);
+  S.show = lerp(S.show, T('show'), ef);
+  S.map = lerp(S.map, T('map'), ef);
+  S.storm = lerp(S.storm, T('storm'), e);
+  S.dusk = lerp(S.dusk, T('dusk'), e);
+  S.clear = lerp(S.clear, T('clear'), e);
+  S.dry = lerp(S.dry, T('dry'), e);
+  S.end = lerp(S.end, T('end'), ef);
+  S.burst = lerp(S.burst, A.burst ? smooth(0.05, 0.55, t) : 0, ef);
+  S.msg = lerp(S.msg, A.msg ? smooth(0.0, 0.2, t) * (1 - smooth(0.88, 1, t)) : 0, ef);
+  const speed = Math.abs(vel) / Math.max(0.001, dt) / vh;
+  S.wind = lerp(S.wind, reduce ? 0 : clamp(vel / Math.max(0.001, dt) / vh * 0.25, -1, 1), 0.08);
+  if (A.ch && speed < 0.05) S.load = Math.min(1, S.load + dt * 0.035); else S.load = Math.max(0, S.load - dt * (0.02 + speed * 0.02));
+  const rainT = T('rain') * (0.75 + S.load * 0.5) + (holding ? 0.35 : 0);
+  S.rain = lerp(S.rain, clamp(rainT), e);
+  S.slant = lerp(S.slant, T('slant') + (holding ? 0.2 : 0), e);
+  S.wet = S.clear > 0.5 ? lerp(S.wet, 0.25, 1 - Math.exp(-dt * 0.4)) : lerp(S.wet, Math.max(S.wet, S.rain * 1.1), 1 - Math.exp(-dt * 0.6));
+  plateA = A.plate; plateB = B.plate; mix = A.plate !== B.plate ? k : 0;
+  if (A.ch) chapter = A.ch; else if (i < 2) chapter = 0;
+  document.body.classList.toggle('is-full', S.full > 0.5 && S.show > 0.5 && S.map < 0.5);
 
-  if (mode === 'gate' || mode === 'page') {
-    s += 0.7 * dt; // the world drifts behind the gate and the page
+  boltAge += dt;
+  if (holding) { holdT += dt; if (holdT > 1.1) { holdT = 0; strike(true); } }
+  nextStrike -= dt * (S.storm > 0.45 ? (S.storm - 0.4) * 2.2 : 0) * (reduce ? 0 : 1);
+  if (nextStrike <= 0 && S.show > 0.5 && S.map < 0.5 && S.msg < 0.1) { strike(); nextStrike = 3 + Math.random() * 6; }
+  boltT = clamp(boltAge / 0.14);
+  boltA = boltAge < 0.5 ? 1 : Math.max(0, 1 - (boltAge - 0.5) / 0.5);
+  const f1 = Math.exp(-boltAge * 7), f2 = boltAge > 0.13 ? Math.exp(-(boltAge - 0.13) * 9) * 0.7 : 0;
+  flash = reduce ? 0 : Math.min(1.2, f1 + f2);
+
+  if (craneT >= 0) { craneT += dt / 16; if (craneT > 1) craneT = -1; }
+  else { craneNext -= dt; if (craneNext <= 0 && S.show > 0.5 && S.map < 0.5 && S.storm < 0.8) { craneT = 0; craneNext = 18 + Math.random() * 16; } }
+
+  par.x = lerp(par.x, reduce ? 0 : par.tx, 0.04); par.y = lerp(par.y, reduce ? 0 : par.ty, 0.04);
+
+  const fl = geo.folio, B2 = geo.band + 8;
+  const fe = S.full * S.full * (3 - 2 * S.full);
+  const full = { x: -B2 - 2, y: -B2 - 2, w: innerWidth + 2 * B2 + 4, h: innerHeight + 2 * B2 + 4 };
+  const win = { x: lerp(fl.x, full.x, fe), y: lerp(fl.y, full.y, fe), w: lerp(fl.w, full.w, fe), h: lerp(fl.h, full.h, fe) };
+
+  if (folio) {
+    const u = folio.u;
+    (u.uWin.value as any).set(win.x, win.y, win.w, win.h);
+    u.uArch.value = 1 - fe;
+    u.uBand.value = geo.band;
+    u.uOpaqueTop.value = geo.portrait ? geo.opaqueTop * (1 - fe) : 0;
+    u.uShow.value = S.show;
+    folio.setPlates(plateA, plateB, mix);
+    u.uTime.value = time;
+    u.uRain.value = S.rain * S.show;
+    u.uSlant.value = S.slant;
+    u.uStorm.value = S.storm;
+    u.uWet.value = S.wet;
+    u.uDusk.value = S.dusk;
+    u.uClear.value = S.clear;
+    u.uDry.value = S.dry;
+    u.uWind.value = S.wind;
+    u.uBurst.value = S.burst;
+    u.uMap.value = S.map;
+    u.uCalm.value = reduce ? 1 : 0;
+    (u.uPar.value as any).set(par.x, par.y);
+    u.uFlash.value = flash * (1 - S.map) * S.show;
+    u.uBoltT.value = boltT; u.uBoltA.value = boltA * (1 - S.map) * S.show;
+    u.uCrane.value = craneT; u.uCraneY.value = Math.max(0.06, (SKY[plateA] ?? 0.3) * 0.35);
+    u.uMsg.value = S.msg;
+    u.uDim.value = S.end;
+    u.uMsgT.value = A.msg ? smooth(0.12, 0.6, t) : 0;
+    (u.uMsgRect.value as any).set(0.08, geo.portrait ? 0.16 : 0.2, 0.84, 0.32);
+    folio.render();
   }
 
-  if (mode === 'fold') {
-    const FOLD = 2.6, TURN = 1.7;
-    boat.uniforms.uFold.value = Math.min(1, modeT / FOLD) * 1.0;
-    if (modeT > FOLD) {
-      // lift, turn to face downstream, and set it on the water just ahead of the camera
-      const k = Math.min(1, (modeT - FOLD) / TURN);
-      const e = k * k * (3 - 2 * k);
-      const rig = rigAt(s);
-      const landS = s + rig.back;
-      waterPose(landS, u, tmp, boatQuatWater, 0, time);
-      boatGroup.position.lerpVectors(sheetPose.pos, tmp, e);
-      boatGroup.position.y += Math.sin(e * Math.PI) * 0.25;
-      boatGroup.quaternion.slerpQuaternions(sheetPose.quat, boatQuatWater, e);
-      boatGroup.scale.setScalar(1 + e * 0.5);
-      boat.uniforms.uUnlit.value = 1 - e;
-      if (k >= 1) { s = landS; boatPos.copy(tmp); startSail(); }
-    }
-  }
+  const mapEl = map.svg;
+  if (S.map > 0.01) {
+    const inset = Math.min(win.w, win.h) * 0.05;
+    const archTop = Math.min(win.w * 0.36, win.h * 0.22) * (1 - fe) * 0.45;
+    mapEl.style.opacity = String(S.map); mapEl.style.visibility = 'visible';
+    mapEl.style.left = `${win.x + inset}px`; mapEl.style.top = `${win.y + inset + archTop}px`;
+    mapEl.style.width = `${win.w - 2 * inset}px`; mapEl.style.height = `${win.h - 2 * inset - archTop}px`;
+    map.set(clamp((scrollY + vh * 0.5 - tops[mapIndex]) / Math.max(1, heights[mapIndex] - vh * 0.3)));
+  } else { mapEl.style.opacity = '0'; mapEl.style.visibility = 'hidden'; }
 
-  if (mode === 'sail' || mode === 'finale' || mode === 'drift') {
-    // steering
-    const usable = Math.max(0.2, hw - 0.38);
-    if (pointer.down) {
-      pointer.heldFor += dt;
-      uT = THREE.MathUtils.clamp((pointer.x - 0.5) * 2.3, -1, 1) * Math.min(usable, 6 + hw * 0.15);
-    }
-    if (keys.left) uT -= dt * Math.max(2.5, hw * 0.4);
-    if (keys.right) uT += dt * Math.max(2.5, hw * 0.4);
-    if (autopilot && mode === 'sail') {
-      // QA and the idle demo: aim for the nearest dark lamp ahead
-      let best: number | null = null, bd = 1e9;
-      for (const d of diyas.list) if (d.state === 0) { const ahead = -d.z - s; if (ahead > 1 && ahead < 30 && ahead < bd) { bd = ahead; best = d.x - centre(-d.z); } }
-      if (best !== null) uT = best;
-    }
-    if (mode === 'finale' || mode === 'drift') uT *= 1 - dt * 0.3;
-    uT = THREE.MathUtils.clamp(uT, -usable, usable);
-    const prevU = u;
-    u += (uT - u) * (1 - Math.exp(-dt * 2.4));
-    if (Math.abs(u) > usable) {
-      if (Math.abs(uVel) > 0.6) sound.bump();
-      u = Math.sign(u) * usable;
-    }
-    uVel = (u - prevU) / Math.max(dt, 1e-4);
+  burstSec.classList.toggle('in', S.burst > 0.6);
+  ladderLinks.forEach(a => a.classList.toggle('on', Number(a.dataset.ch) === chapter));
+  loadBar.style.width = `${S.load * 100}%`;
+  holdHint.classList.toggle('show', A.ch >= 4 && A.ch <= 6 && S.full < 0.5 && S.show > 0.5);
 
-    blow += ((pointer.down && pointer.heldFor > 0.45) || keys.space ? 1 : 0) - blow > 0 ? dt * 2 : -dt * 1.2;
-    blow = THREE.MathUtils.clamp(blow, 0, 1);
-    let target = speedAt(s) * (1 + blow * 0.55);
-    if (mode === 'finale') target = 1.4;
-    if (mode === 'drift') target = 1.1 + blow * 1.2;
-    speed += (target - speed) * (1 - Math.exp(-dt * 1.2));
-    s += speed * dt;
-
-    const roll = THREE.MathUtils.clamp(-uVel * 0.12, -0.35, 0.35);
-    waterPose(s, u, boatPos, boatQuatWater, roll, time);
-    boatGroup.position.copy(boatPos);
-    boatGroup.quaternion.copy(boatQuatWater);
-
-    trailAcc += speed * dt;
-    while (trailAcc > TRAIL_STEP) { trailAcc -= TRAIL_STEP; trail.unshift(boatPos.clone()); if (trail.length > 600) trail.pop(); }
-
-    soak = Math.min(0.7, soak + rainAt(s) * dt * 0.0025);
-    if (mode === 'sail' && s >= END) finale();
-    if (mode === 'finale' && modeT > 6.5 && !$('end').classList.contains('is-on')) showEnd();
-    if (mode === 'drift') driftT += dt;
-
-    // chapter captions
-    const ch = chapterAt(s);
-    if (ch !== lastChapter && mode === 'sail') { if (lastChapter !== -1 || modeT < 1) caption(ch); lastChapter = ch; }
-    if (!hintDiyaShown && mode === 'sail' && diyas.list.some(d => d.state === 0 && -d.z - s < 22 && -d.z - s > 4)) {
-      hintDiyaShown = true; hint('Steer through the dark lamps to light them.', 6000);
-    }
-    for (const ts of banks.temples) if (!templeRung.has(ts) && Math.abs(ts - s) < 3) { templeRung.add(ts); sound.bell(-0.6); setTimeout(() => sound.bell(-0.55), 2600); }
-  }
-
-  // weather
-  let r = rainAt(s);
-  let clear = clearAt(s);
-  if (mode === 'drift') { const cyc = 0.5 - 0.5 * Math.cos(driftT / 30); r = cyc * 0.45; clear = 1 - cyc * 0.6; }
-  shared.uRain.value = r;
-  shared.uClear.value = clear;
-  shared.uWet.value = Math.max(0.35, Math.min(1, r * 1.4 + 0.3));
-  shared.uFogDensity.value = mode === 'drift' ? 0.009 + r * 0.01 : fogAt(s);
-  const fog = new THREE.Color('#1d1b26').lerp(new THREE.Color('#0f1424'), clear);
-  shared.uFogColor.value.copy(fog);
-  shared.uAmbient.value.setRGB(0.11, 0.105, 0.14).lerp(new THREE.Color(0.07, 0.09, 0.15), clear);
-
-  // lightning: in the late canal and the ghat, the storm's heart
-  if (firstStrike > 0 && mode === 'sail') { firstStrike -= dt; if (firstStrike <= 0) { strike(); nextStrike = 7; } }
-  const storm = Math.max(0, w[2] * (1 - clear)) + w[1] * 0.3 + w[0] * 0.25;
-  if ((mode === 'sail' || mode === 'gate' || mode === 'page') && storm > 0.2) {
-    nextStrike -= dt * storm;
-    if (nextStrike <= 0) { strike(); nextStrike = 4 + Math.random() * 8; }
-  }
-  lightning.update(dt, !flashOn || reduceMotion);
-  shared.uFlash.value = lightning.flash;
-  shared.uFlashDir.value.copy(lightning.dir);
-  shared.uTime.value = time;
-
-  // diyas
-  if (mode !== 'fold') diyas.spawn(s);
-  diyas.update(dt, s, boatPos, trailAt, time);
-
-  banks.update(s);
-  boat.uniforms.uSoak.value = soak;
-
-  // sound: the beds every frame, and the score follows the journey
-  const section = mode === 'gate' || mode === 'page' || mode === 'fold' ? 0 : mode === 'finale' || mode === 'drift' ? 4 : [1, 2, 3, 4][chapterAt(s)];
-  sound.setSection(section);
-  sound.update(dt, r, w[0], mode === 'sail' || mode === 'drift' ? speed : 0.6, blow > 0.3, 1, clear * (mode === 'drift' || mode === 'finale' || w[3] > 0.5 ? 1 : 0));
-  skyline.uniforms.uFar.value = w[0] * 1 + w[1] * 1 + w[2] * 0.95 + w[3] * 0.3;
-  water.uniforms.uFar.value = (w[1] + w[2] * 0.95 + w[3] * 0.3);
-  boat.uniforms.uGlow.value = Math.min(0.5, diyas.following * 0.05);
+  Object.assign(score.state, { rain: S.rain * S.show, storm: S.storm, ch: chapter, clear: S.clear, tin: plateA === 2 ? 1 : 0, frogs: plateA === 1 || plateA === 3 ? 1 : 0, msg: S.msg });
+  score.update(dt);
 }
 
-function strike() {
-  camera.getWorldDirection(tmp);
-  lightning.strike(camera.position, tmp);
-  sound.thunder(lightning.distance);
+// ---------------------------------------------------------------- debug
+let dbg: HTMLElement | null = null;
+function debugLine() {
+  if (!dbg) { dbg = document.createElement('pre'); dbg.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99;margin:0;font:11px/1.3 monospace;color:#fff;background:#0009;padding:6px 8px;pointer-events:none'; document.body.appendChild(dbg); }
+  dbg.textContent = `sec ${secIndex} t ${secT.toFixed(2)} ch ${chapter} ${PLATES[plateA]}→${PLATES[plateB]} mix ${mix.toFixed(2)} full ${S.full.toFixed(2)} rain ${S.rain.toFixed(2)} storm ${S.storm.toFixed(2)} fps ${fps.toFixed(0)} dpr ${quality.dpr}`;
 }
+(window as any).__barsaat = { jump: (y: number) => { lenis ? lenis.scrollTo(y, { immediate: true, force: true }) : scrollTo(0, y); }, strike, S, sections, get fps() { return fps; }, enter, setSound };
 
-// ---------------------------------------------------------------- camera
-
-function updateCamera(dt: number) {
-  const rig = rigAt(s);
-  let back = rig.back, h = rig.h, look = 7;
-  if (mode === 'finale' || mode === 'drift') {
-    const k = Math.min(1, modeT / 9);
-    const e = k * k * (3 - 2 * k);
-    back = THREE.MathUtils.lerp(rig.back, 6.5, e);
-    h = THREE.MathUtils.lerp(rig.h, 3.0, e);
-    look = THREE.MathUtils.lerp(7, 30, e);
-  }
-  const cs = s - back;
-  const sway = reduceMotion ? 0 : Math.sin(time * 0.4) * 0.08;
-  tmp.set(centre(cs) + u * 0.6 + sway, h + (reduceMotion ? 0 : Math.sin(time * 0.9) * 0.03), -cs);
-  const k = 1 - Math.exp(-dt * (mode === 'fold' ? 1.0 : 3.0));
-  if (mode === 'fold') { /* hold still while the paper folds */ } else camPos.lerp(tmp, k);
-  tmp.set(centre(s + look) + u * 0.7, mode === 'finale' || mode === 'drift' ? 1.2 : 0.15 + h * 0.25, -(s + look));
-  if (mode !== 'fold') camLook.lerp(tmp, k);
-  camera.position.copy(camPos);
-  camera.lookAt(camLook);
-}
-
-// ---------------------------------------------------------------- lights
-
-const lightPool: { l: Light; d: number }[] = [];
-const diyaLight = (x: number, y: number, z: number, b: number): Light => ({ p: new THREE.Vector3(x, y, z), c: new THREE.Vector3(1.0, 0.55, 0.22).multiplyScalar(b), size: 0.5, flicker: 1 });
-
-function updateLights() {
-  if (banks.dirty) {
-    staticGlows.begin();
-    for (const l of banks.lights) staticGlows.push(l.p, l.c, l.size * (l.glowOnly ? 1 : 1.6), l.flicker);
-    staticGlows.end();
-    banks.dirty = false;
-  }
-  flameGlows.begin(); haloGlows.begin();
-  const lamps: Light[] = [];
-  for (const d of diyas.list) {
-    const f = diyas.flame(d);
-    tmp.set(d.x, d.y + 0.06, d.z);
-    if (f > 0) {
-      flameGlows.push(tmp, new THREE.Vector3(1.0, 0.62, 0.25).multiplyScalar(1.6 * f), 0.07 * f, 1);
-      haloGlows.push(tmp, new THREE.Vector3(1.0, 0.5, 0.18).multiplyScalar(0.55 * f), 0.75 * f, 1);
-      lamps.push(diyaLight(d.x, d.y + 0.1, d.z, 0.9 * f));
-    } else {
-      // an ember on the wick, so you can see where the dark ones are
-      const p = 0.5 + 0.5 * Math.sin(time * 2.2 + d.seed * 20);
-      haloGlows.push(tmp, new THREE.Vector3(0.9, 0.35, 0.12).multiplyScalar(0.18 + p * 0.12), 0.32, 0);
-      flameGlows.push(tmp, new THREE.Vector3(1.0, 0.35, 0.1).multiplyScalar(0.5), 0.018, 0);
-    }
-  }
-  flameGlows.end(); haloGlows.end();
-
-  // the sixteen lights that matter most right now light the world and the water
-  camera.getWorldDirection(tmp);
-  const focus = tmp.multiplyScalar(6).add(camera.position);
-  lightPool.length = 0;
-  for (const l of banks.lights) if (!l.glowOnly) lightPool.push({ l, d: l.p.distanceToSquared(focus) / (l.c.x + 0.2) });
-  for (const l of lamps) lightPool.push({ l, d: l.p.distanceToSquared(focus) / (l.c.x + 0.2) });
-  lightPool.sort((a, b) => a.d - b.d);
-  for (let i = 0; i < MAX_LIGHTS; i++) {
-    const e = lightPool[i];
-    if (e) {
-      shared.uLightPos.value[i].copy(e.l.p);
-      const fl = e.l.flicker ? 0.85 + 0.15 * Math.sin(time * 15 + e.l.p.x * 7) : 1;
-      shared.uLightCol.value[i].copy(e.l.c).multiplyScalar(fl);
-    } else { shared.uLightPos.value[i].set(0, -999, 0); shared.uLightCol.value[i].set(0, 0, 0); }
-  }
-}
-
-// ---------------------------------------------------------------- frame
-
-function render() {
-  sky.position.copy(camera.position);
-  water.mesh.position.set(Math.round(camera.position.x / 10) * 10, 0, Math.round(camera.position.z / 10) * 10);
-  water.uniforms.uBoat.value.copy(boatGroup.visible && mode !== 'fold' ? boatPos : tmp.set(0, -99, 0));
-  const heading = Math.atan(slope(s));
-  water.uniforms.uBoatFwd.value.set(Math.sin(heading), -Math.cos(heading));
-  water.uniforms.uBoatSpeed.value = mode === 'sail' || mode === 'finale' || mode === 'drift' ? speed : 0;
-  const cs = -camera.position.z;
-  water.uniforms.uRiver.value.set(centre(cs + 6), 0, halfWidth(cs + 6), 0);
-  const [wl, wr] = wallHeights(cs + 6);
-  water.uniforms.uWalls.value.set(wl, wr);
-  water.uniforms.uWindows.value = weights(cs + 6)[0];
-  rain.geo.instanceCount = Math.floor(rain.max * Math.min(1, shared.uRain.value * 1.15) * quality);
-  rain.uniforms.uVel.value.set(0, 0, -speed);
-  renderer.render(scene, camera);
-}
-
-let quality = 1;
-let last = performance.now();
-let acc = 0, frames = 0, worstWindow = 0;
-function frame(now: number) {
-  const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
-  last = now;
-  step(dt);
-  updateCamera(dt);
-  updateLights();
-  render();
-
-  // adaptive resolution: hold ~45+ fps on a tablet
-  acc += dt; frames++;
-  if (acc > 2) {
-    const fps = frames / acc;
-    if (fps < 40 && dpr > 0.6) { dpr = Math.max(0.6, dpr - 0.15); renderer.setPixelRatio(dpr); resize(); quality = Math.max(0.5, quality - 0.1); }
-    else if (fps > 57 && dpr < maxDpr) { dpr = Math.min(maxDpr, dpr + 0.1); renderer.setPixelRatio(dpr); resize(); quality = Math.min(1, quality + 0.1); }
-    if (DEBUG) $('debug').textContent = `${fps.toFixed(0)} fps · dpr ${dpr.toFixed(2)} · s ${s.toFixed(0)} · ${mode} · lit ${lit}`;
-    worstWindow = fps;
-    acc = 0; frames = 0;
-  }
-  requestAnimationFrame(frame);
-}
-
-function resize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h;
-  camera.fov = w < h ? 74 : 58;
-  camera.updateProjectionMatrix();
-}
-addEventListener('resize', resize);
-resize();
-
-// ---------------------------------------------------------------- UI wiring
-
-function setSoundButton() {
-  const b = $('btn-sound');
-  b.setAttribute('aria-pressed', String(sound.enabled));
-  b.querySelector('.label')!.textContent = sound.enabled ? 'Sound on' : 'Sound off';
-}
-$('enter-sound').addEventListener('click', () => enter(true));
-$('enter-quiet').addEventListener('click', () => enter(false));
-$('btn-fold').addEventListener('click', fold);
-$('btn-clear').addEventListener('click', () => { page.clear(); });
-$('btn-sound').addEventListener('click', () => { sound.enabled ? sound.stop() : sound.start(); setSoundButton(); });
-$('btn-flash').addEventListener('click', () => {
-  flashOn = !flashOn;
-  $('btn-flash').setAttribute('aria-pressed', String(flashOn));
-  $('btn-flash').querySelector('.label')!.textContent = flashOn ? 'Lightning flashes on' : 'Lightning flashes soft';
-});
-$('btn-info').addEventListener('click', () => ($('about') as HTMLDialogElement).showModal());
-$('btn-again').addEventListener('click', restart);
-$('btn-drift').addEventListener('click', drift);
-$('btn-card').addEventListener('click', postcard);
-page.onInk = () => $('btn-fold').classList.add('is-ready');
-document.addEventListener('visibilitychange', () => { if (document.hidden && sound.ctx) sound.ctx.suspend(); else if (sound.ctx && sound.enabled) sound.ctx.resume(); });
-
-// ---------------------------------------------------------------- go
-
-banks.prime(s);
-updateCamera(1);
-camPos.copy(camera.position);
-document.documentElement.classList.add('ready');
-requestAnimationFrame(t => { last = t; frame(t); });
-
-// QA hooks
-if (DEBUG) {
-  $('debug').hidden = false;
-  const w = window as unknown as Record<string, unknown>;
-  w.__ff = (sec: number) => { const n = Math.round(sec * 30); for (let i = 0; i < n; i++) { step(1 / 30); updateCamera(1 / 30); } updateLights(); };
-  w.__scene = scene;
-  w.__go = (to: number) => { s = to; trail.length = 0; banks.reset(); banks.prime(s); diyas.reset(); diyas.startAt(s); updateCamera(1); camPos.copy(tmp); };
-  w.__strike = strike;
-  w.__auto = (on: boolean) => { autopilot = on; };
-  w.__probe = () => ({ mode, s: Math.round(s), chapter: chapterAt(s), lit, following: diyas.following, diyas: diyas.list.length, lights: banks.lights.length, dpr, fps: worstWindow, rain: shared.uRain.value.toFixed(2) });
-  w.__mode = () => mode;
-}
-void STARTS;
+addEventListener('resize', layout);
+new ResizeObserver(measure).observe(document.querySelector('main')!);
+layout();
+boot();
+requestAnimationFrame(frame);
