@@ -299,7 +299,7 @@ All are in `/workspace/work/barsaat3/research/refs/`.
 - **Kerala 1 June** (standard deviation ~7 days).
 - NE India ~5 June. Goa and south Maharashtra 10 June. **Mumbai 11 June**.
 - Most of West Bengal, Odisha and Telangana by 15 June.
-- Gujarat south, Madhya Pradesh south, Jharkhand and Bihar by 20 June. **Delhi 27 June**.
+- Gujarat south, Madhya Pradesh south by 20 June; the east by about the same time. **Delhi 27 June**.
 - Most of the north by 30 June. **Entire country 8 July** (the old 1901–40 normal was 15 July).
 - **Withdrawal** begins in west Rajasthan ~17 September and leaves most of the country by 15 October, when the northeast monsoon sets in over the south.
 
