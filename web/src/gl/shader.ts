@@ -113,9 +113,10 @@ void main() {
   float ys = y0 + A;
   float d = dRect;
   if (A > 0.5 && px.y < ys) {
-    float R = (w * w * 0.25 + A * A) / w;
-    vec2 cL = vec2(x0 + R, ys), cR = vec2(x0 + w - R, ys);
-    float dArch = max(length(px - cL) - R, length(px - cR) - R);
+    // a rounded Mughal arch with a soft point at the apex
+    float u = clamp((px.x - c.x) / (w * 0.5), -1.0, 1.0);
+    float top = A * (sqrt(max(0.0, 1.0 - u * u)) * 0.82 + (1.0 - abs(u)) * 0.18);
+    float dArch = (ys - px.y) - top;
     d = max(dArch, dRect);
   }
 
