@@ -4,6 +4,7 @@ import Lenis from 'lenis';
 import { Folio, PLATES, SKY } from './gl/folio';
 import { Score } from './audio';
 import { RouteMap } from './map';
+import { applyLang, initialLang, t as tr, lang, type Lang } from './i18n';
 
 // One clock, one state. Scroll position → per-section targets → eased state → GL, DOM, sound.
 
@@ -46,6 +47,15 @@ let folio: Folio | null = null;
 try { folio = new Folio(canvas); } catch (e) { console.warn('WebGL unavailable', e); document.body.classList.add('no-gl'); }
 const score = new Score();
 const map = new RouteMap($<SVGSVGElement>('#map'));
+
+// ---------------------------------------------------------------- language
+const langButtons = [...document.querySelectorAll<HTMLButtonElement>('.lang-b')];
+function setLang(l: Lang) {
+  applyLang(l);
+  langButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === l)));
+  document.dispatchEvent(new Event('relabel'));
+}
+langButtons.forEach(b => b.addEventListener('click', () => setLang(b.dataset.lang as Lang)));
 
 // ---------------------------------------------------------------- layout
 const quality = { dpr: Number(url.searchParams.get('dpr')) || (touch ? 1.25 : 1.5), slow: 0 };
@@ -95,40 +105,49 @@ const goTo = (target: string | number, duration = 1.8) => {
 
 // ---------------------------------------------------------------- message
 const msgEl = $<HTMLTextAreaElement>('#msg');
-const msgN = $('#msg-n');
+const msgNEl = () => $('#msg-n');
+const msgN = { set textContent(v: string) { const e = msgNEl(); if (e) e.textContent = v; } };
 const letter = $<HTMLFormElement>('#letter');
 let message = '';
 const enc = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const dec = (s: string) => { try { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))); } catch { return ''; } };
 const arrived = location.hash.startsWith('#m=') ? dec(location.hash.slice(3)).replace(/[\u0000-\u001f]/g, ' ').slice(0, 140) : '';
-const fallbackMsg = 'I am well. The rains have come. I think of you.';
+const fallbackMsg = () => tr('placeholder');
 function setMessage(m: string) {
-  message = (m.trim() || fallbackMsg).slice(0, 140);
+  message = (m.trim() || fallbackMsg()).slice(0, 140);
   document.fonts.load('400 60px Kalam').catch(() => null).then(() => folio?.writeMessage(message));
-  $('#msg-sr').textContent = `Written on the glass: ${message}`;
+  $('#msg-sr').textContent = tr('writtenOn') + message;
 }
 msgEl.addEventListener('input', () => { msgN.textContent = String(msgEl.value.length); });
 letter.addEventListener('submit', e => {
   e.preventDefault();
   setMessage(msgEl.value);
   letter.classList.add('sent');
-  letter.querySelector('button')!.textContent = 'Carrying it';
+  letter.querySelector('button')!.textContent = tr('carrying');
   goTo('#boonda-baandi', 2.2);
 });
 if (arrived) {
   msgEl.value = arrived; msgEl.readOnly = true; msgN.textContent = String(arrived.length);
-  $('.letter-k').textContent = 'This cloud is carrying a message for you. It will be delivered at the end of the road.';
-  letter.querySelector('button')!.textContent = 'Fly north';
 }
-setMessage(arrived);
+let typed = false;
+msgEl.addEventListener('input', () => { typed = true; });
+function relabel() {
+  msgEl.placeholder = tr('placeholder');
+  if (arrived) { $('.letter-k').textContent = tr('arrivedK'); letter.querySelector('button')!.textContent = tr('flyNorth'); }
+  else if (letter.classList.contains('sent')) letter.querySelector('button')!.textContent = tr('carrying');
+  chip.querySelector('.chip-t')!.textContent = score.on ? tr('soundOn') : tr('soundOff');
+  msgN.textContent = String(msgEl.value.length);
+  if (!typed && !arrived && !letter.classList.contains('sent')) setMessage('');
+}
+document.addEventListener('relabel', relabel);
 
 $('#share').addEventListener('click', async () => {
-  const link = `${location.origin}${location.pathname}#m=${enc(message)}`;
+  const link = `${location.origin}${location.pathname}${lang === 'hi' ? '?lang=hi' : ''}#m=${enc(message)}`;
   const out = $('#share-out');
   try {
-    if (navigator.share) { await navigator.share({ title: 'A cloud has brought you a message', text: 'Even happy hearts thrill strangely to the cloud.', url: link }); out.textContent = 'The cloud is on its way.'; return; }
+    if (navigator.share) { await navigator.share({ title: tr('shareTitle'), url: link }); out.textContent = tr('shareSent'); return; }
   } catch { /* cancelled */ }
-  try { await navigator.clipboard.writeText(link); out.textContent = 'Link copied. Send it to someone far away.'; }
+  try { await navigator.clipboard.writeText(link); out.textContent = tr('shareCopied'); }
   catch { out.textContent = link; }
 });
 $('#again').addEventListener('click', e => { e.preventDefault(); goTo(0, 3); });
@@ -148,7 +167,7 @@ async function setSound(v: boolean) {
   try { if (v) await score.start(); } catch { v = false; }
   score.setOn(v);
   chip.setAttribute('aria-pressed', String(v));
-  chip.querySelector('.chip-t')!.textContent = v ? 'Sound on' : 'Sound off';
+  chip.querySelector('.chip-t')!.textContent = v ? tr('soundOn') : tr('soundOff');
 }
 chip.addEventListener('click', () => setSound(!score.on));
 
@@ -217,6 +236,8 @@ let craneT = -1, craneNext = 4;
 const burstSec = $('.sec-burst');
 const mapIndex = sections.findIndex(s => s.classList.contains('sec-map'));
 const loadBar = $('.load-bar span');
+let lastCh = -1, lastLoad = -1;
+const setClass = (el: Element, c: string, v: boolean) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
 function frame(now: number) {
   requestAnimationFrame(frame);
   const raw = (now - last) / 1000;
@@ -232,7 +253,7 @@ function frame(now: number) {
   frames++; fpsT += dt;
   if (fpsT > 1) {
     fps = frames / fpsT; frames = 0; fpsT = 0;
-    if (fps < 40 && quality.dpr > 0.75 && time > 4 && !url.searchParams.get('dpr')) { if (++quality.slow > 2) { quality.dpr = Math.max(0.75, quality.dpr - 0.25); quality.slow = 0; layout(); } } else quality.slow = 0;
+    if (fps < (touch ? 50 : 40) && quality.dpr > 0.75 && time > 4 && !url.searchParams.get('dpr')) { if (++quality.slow > 2) { quality.dpr = Math.max(0.75, quality.dpr - 0.25); quality.slow = 0; layout(); } } else quality.slow = 0;
   }
   if (DEBUG) debugLine();
 }
@@ -250,7 +271,7 @@ function step(dt: number) {
   const T = (key: keyof Target) => lerp(A[key], B[key], k);
   const e = 1 - Math.exp(-dt * (reduce ? 20 : 4));
   const ef = 1 - Math.exp(-dt * 12);
-  S.full = lerp(S.full, T('full'), ef);
+  S.full = lerp(S.full, T('full'), ef * 1.6 > 1 ? 1 : ef * 1.6);
   S.show = lerp(S.show, T('show'), ef);
   S.map = lerp(S.map, T('map'), ef);
   S.storm = lerp(S.storm, T('storm'), e);
@@ -269,7 +290,7 @@ function step(dt: number) {
   S.wet = S.clear > 0.5 ? lerp(S.wet, 0.25, 1 - Math.exp(-dt * 0.4)) : lerp(S.wet, Math.max(S.wet, S.rain * 1.1), 1 - Math.exp(-dt * 0.6));
   plateA = A.plate; plateB = B.plate; mix = A.plate !== B.plate ? k : 0;
   if (A.ch) chapter = A.ch; else if (i < 2) chapter = 0;
-  document.body.classList.toggle('is-full', S.full > 0.5 && S.show > 0.5 && S.map < 0.5);
+  setClass(document.body, 'is-full', S.full > 0.5 && S.show > 0.5 && S.map < 0.5);
 
   boltAge += dt;
   if (holding) { holdT += dt; if (holdT > 1.1) { holdT = 0; strike(true); } }
@@ -331,12 +352,12 @@ function step(dt: number) {
     map.set(clamp((scrollY + vh * 0.5 - tops[mapIndex]) / Math.max(1, heights[mapIndex] - vh * 0.3)));
   } else { mapEl.style.opacity = '0'; mapEl.style.visibility = 'hidden'; }
 
-  burstSec.classList.toggle('in', S.burst > 0.6);
-  ladderLinks.forEach(a => a.classList.toggle('on', Number(a.dataset.ch) === chapter));
-  loadBar.style.width = `${S.load * 100}%`;
-  holdHint.classList.toggle('show', A.ch >= 4 && A.ch <= 6 && S.full < 0.5 && S.show > 0.5);
+  setClass(burstSec, 'in', S.burst > 0.6);
+  if (chapter !== lastCh) { lastCh = chapter; ladderLinks.forEach(a => a.classList.toggle('on', Number(a.dataset.ch) === chapter)); }
+  const lw = Math.round(S.load * 100); if (lw !== lastLoad) { lastLoad = lw; loadBar.style.width = `${lw}%`; }
+  setClass(holdHint, 'show', A.ch >= 4 && A.ch <= 6 && S.full < 0.5 && S.show > 0.5);
 
-  Object.assign(score.state, { rain: S.rain * S.show, storm: S.storm, ch: chapter, clear: S.clear, tin: plateA === 2 ? 1 : 0, frogs: plateA === 1 || plateA === 3 ? 1 : 0, msg: S.msg });
+  Object.assign(score.state, { rain: S.rain, storm: S.storm, ch: chapter, clear: S.clear, msg: S.msg, full: S.full, show: S.show });
   score.update(dt);
 }
 
@@ -346,10 +367,23 @@ function debugLine() {
   if (!dbg) { dbg = document.createElement('pre'); dbg.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:99;margin:0;font:11px/1.3 monospace;color:#fff;background:#0009;padding:6px 8px;pointer-events:none'; document.body.appendChild(dbg); }
   dbg.textContent = `sec ${secIndex} t ${secT.toFixed(2)} ch ${chapter} ${PLATES[plateA]}→${PLATES[plateB]} mix ${mix.toFixed(2)} full ${S.full.toFixed(2)} rain ${S.rain.toFixed(2)} storm ${S.storm.toFixed(2)} fps ${fps.toFixed(0)} dpr ${quality.dpr}`;
 }
-(window as any).__barsaat = { jump: (y: number) => { lenis ? lenis.scrollTo(y, { immediate: true, force: true }) : scrollTo(0, y); }, strike, S, sections, get fps() { return fps; }, enter, setSound };
+(window as any).__barsaat = { jump: (y: number) => { lenis ? lenis.scrollTo(y, { immediate: true, force: true }) : scrollTo(0, y); }, strike, S, sections, get fps() { return fps; }, enter, setSound, score };
 
-addEventListener('resize', layout);
+let lastW = innerWidth, lastH = innerHeight;
+addEventListener('resize', () => {
+  // on phones/tablets the browser bar sliding in and out changes the height by a little; re-laying
+  // out the canvas for that causes a hitch mid-scroll, so only react to real changes
+  if (touch && innerWidth === lastW && Math.abs(innerHeight - lastH) < 160) { measure(); return; }
+  lastW = innerWidth; lastH = innerHeight;
+  layout();
+});
 new ResizeObserver(measure).observe(document.querySelector('main')!);
+// verses, notes and prose rise in as they enter
+if (!reduce && 'IntersectionObserver' in window) {
+  const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -12% 0px' });
+  document.querySelectorAll('.verse, .prose, .note, .eyebrow, .fine, .try, .letter, .g-head, .g-item').forEach(el => { el.classList.add('rise'); io.observe(el); });
+}
+setLang(initialLang());
 layout();
 boot();
 requestAnimationFrame(frame);
